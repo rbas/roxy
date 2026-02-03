@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod cli;
+mod daemon;
 mod domain;
 mod infrastructure;
 
@@ -53,6 +54,22 @@ enum Commands {
 
     /// List all registered domains
     List,
+
+    /// Start the Roxy daemon
+    Start {
+        /// Run in foreground (don't daemonize)
+        #[arg(long)]
+        foreground: bool,
+    },
+
+    /// Stop the Roxy daemon
+    Stop,
+
+    /// Restart the Roxy daemon
+    Restart,
+
+    /// Show daemon and domain status
+    Status,
 }
 
 fn main() -> Result<()> {
@@ -64,5 +81,9 @@ fn main() -> Result<()> {
         Commands::Register { domain, path, port } => cli::register::execute(domain, path, port),
         Commands::Unregister { domain, force } => cli::unregister::execute(domain, force),
         Commands::List => cli::list::execute(),
+        Commands::Start { foreground } => cli::start::execute(foreground),
+        Commands::Stop => cli::stop::execute(),
+        Commands::Restart => cli::restart::execute(),
+        Commands::Status => cli::status::execute(),
     }
 }

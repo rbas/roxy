@@ -12,3 +12,24 @@ toml = "0.8"
 dirs = "5.0"
 rcgen = "0.13"
 time = "0.3"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP server
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+
+# HTTP client (for reverse proxy)
+hyper = { version = "1.6", features = ["full"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio", "server-auto", "service"] }
+http-body-util = "0.1"
+
+# TLS
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+
+# Signal handling
+ctrlc = "3.4"

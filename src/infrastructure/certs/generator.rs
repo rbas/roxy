@@ -158,7 +158,6 @@ impl CertificateGenerator {
     }
 
     /// Get paths to certificate files for a domain
-    #[allow(dead_code)]
     pub fn get_paths(&self, domain: &DomainName) -> Option<CertPaths> {
         let domain_str = domain.as_str();
         let cert_path = self.certs_dir.join(format!("{}.crt", domain_str));

@@ -23,7 +23,7 @@ impl Port {
         Ok(Self(port))
     }
 
-    #[allow(dead_code)] // Will be used when daemon is implemented
+    #[allow(dead_code)]
     pub fn value(&self) -> u16 {
         self.0
     }
