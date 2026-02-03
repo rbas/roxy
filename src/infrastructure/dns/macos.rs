@@ -84,8 +84,9 @@ impl DnsService for MacOsDnsService {
             ));
         }
 
-        let content = fs::read_to_string(path)
-            .map_err(|e| DnsError::ValidationFailed(format!("Failed to read resolver file: {}", e)))?;
+        let content = fs::read_to_string(path).map_err(|e| {
+            DnsError::ValidationFailed(format!("Failed to read resolver file: {}", e))
+        })?;
 
         if !content.contains("nameserver") || !content.contains("127.0.0.1") {
             return Err(DnsError::ValidationFailed(
@@ -123,7 +124,8 @@ impl DnsService for MacOsDnsService {
 
         Err(DnsError::ValidationFailed(
             "DNS resolver for .roxy not found in scutil output after multiple attempts. \
-             Try running 'sudo killall -HUP mDNSResponder' to refresh DNS.".into(),
+             Try running 'sudo killall -HUP mDNSResponder' to refresh DNS."
+                .into(),
         ))
     }
 
