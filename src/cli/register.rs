@@ -1,7 +1,8 @@
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use std::path::PathBuf;
 
 use crate::domain::{DomainName, DomainRegistration, Target};
+use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 
 pub fn execute(domain: String, path: Option<PathBuf>, port: Option<u16>) -> Result<()> {
@@ -17,6 +18,7 @@ pub fn execute(domain: String, path: Option<PathBuf>, port: Option<u16>) -> Resu
     };
 
     let config_store = ConfigStore::new();
+    let cert_service = CertificateService::new();
 
     // Check if already registered
     if config_store.get_domain(&domain)?.is_some() {
@@ -28,15 +30,37 @@ pub fn execute(domain: String, path: Option<PathBuf>, port: Option<u16>) -> Resu
     }
 
     // Create registration
-    let registration = DomainRegistration::new(domain.clone(), target.clone());
+    let mut registration = DomainRegistration::new(domain.clone(), target.clone());
+
+    // Generate and install certificate
+    println!("Generating SSL certificate for {}...", domain);
+    match cert_service.create_and_install(&domain) {
+        Ok(()) => {
+            registration.enable_https();
+            println!("  Certificate installed and trusted.");
+        }
+        Err(e) => {
+            // Certificate generation failed - warn but continue
+            eprintln!("  Warning: Failed to generate certificate: {}", e);
+            eprintln!("  HTTPS will not be available for this domain.");
+            eprintln!("  Run 'sudo roxy register {}' to enable HTTPS.", domain);
+        }
+    }
 
     // Save to config
     config_store.add_domain(registration)?;
 
-    println!("Registered domain: {}", domain);
+    println!("\nRegistered domain: {}", domain);
     println!("  Target: {}", target);
-    println!("\nNote: HTTPS certificate generation will be added in a future update.");
-    println!("Start the proxy with: roxy start");
+    println!(
+        "  HTTPS: {}",
+        if cert_service.exists(&domain) {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!("\nStart the proxy with: roxy start");
 
     Ok(())
 }
