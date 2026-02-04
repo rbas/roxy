@@ -1,30 +1,94 @@
 use anyhow::Result;
+use std::fs;
+use std::process::Command;
 
+use crate::infrastructure::certs::CertificateService;
+use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::dns::{DnsService, get_dns_service};
+use crate::infrastructure::pid::PidFile;
 
 pub fn execute(force: bool) -> Result<()> {
     if !force {
         println!("This will remove all Roxy configuration including:");
+        println!("  - Stop the running daemon");
         println!("  - DNS configuration for *.roxy domains");
-        println!("  - All registered domains (future)");
-        println!("  - All SSL certificates (future)");
+        println!("  - All registered domains");
+        println!("  - All SSL certificates from system trust store");
+        println!("  - All data in ~/.roxy/");
         println!("\nRun with --force to confirm, or press Ctrl+C to cancel.");
         return Ok(());
     }
 
     println!("Uninstalling Roxy...\n");
 
-    let dns = get_dns_service()?;
+    // Step 1: Stop daemon if running
+    let pid_file = PidFile::new();
+    if let Some(pid) = pid_file.get_running_pid()? {
+        println!("  Stopping daemon (PID: {})...", pid);
+        stop_daemon(pid)?;
+        pid_file.remove()?;
+        println!("  Daemon stopped.");
+    }
 
+    // Step 2: Remove certificates from trust store
+    let config_store = ConfigStore::new();
+    let domains = config_store.list_domains().unwrap_or_default();
+
+    if !domains.is_empty() {
+        println!(
+            "  Removing {} domain certificate(s) from trust store...",
+            domains.len()
+        );
+        let cert_service = CertificateService::new();
+
+        for registration in &domains {
+            match cert_service.remove(&registration.domain) {
+                Ok(_) => println!("    - {} removed", registration.domain),
+                Err(e) => println!("    - {} failed: {}", registration.domain, e),
+            }
+        }
+    }
+
+    // Step 3: Remove DNS configuration
+    let dns = get_dns_service()?;
     if dns.is_configured() {
         println!("  Removing DNS configuration...");
         dns.cleanup()?;
         println!("  DNS configuration removed.");
-    } else {
-        println!("  DNS not configured, skipping...");
+    }
+
+    // Step 4: Remove ~/.roxy/ directory entirely
+    let roxy_dir = config_store.config_dir();
+    if roxy_dir.exists() {
+        println!("  Removing {}...", roxy_dir.display());
+        fs::remove_dir_all(&roxy_dir)?;
+        println!("  Directory removed.");
     }
 
     println!("\nRoxy uninstallation complete!");
+    println!("All configuration and certificates have been removed.");
+
+    Ok(())
+}
+
+fn stop_daemon(pid: u32) -> Result<()> {
+    // Send SIGTERM
+    Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .output()?;
+
+    // Wait briefly for graceful shutdown
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Check if still running, force kill if needed
+    let status = Command::new("kill").args(["-0", &pid.to_string()]).output();
+
+    if status.is_ok() && status.unwrap().status.success() {
+        // Still running, force kill
+        Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .output()?;
+    }
 
     Ok(())
 }
