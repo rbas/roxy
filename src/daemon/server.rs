@@ -5,10 +5,11 @@ use anyhow::{Context, Result};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
-use super::router::{create_http_redirect_router, create_router, AppState};
+use super::router::{AppState, create_http_redirect_router, create_router};
 use super::tls::create_tls_acceptor;
 use crate::domain::DomainName;
 use crate::infrastructure::config::ConfigStore;
+use crate::infrastructure::logging::LogFile;
 
 pub struct Server {
     state: Arc<AppState>,
@@ -37,6 +38,9 @@ impl Server {
     }
 
     pub async fn run(self) -> Result<()> {
+        let log = LogFile::new();
+        let _ = log.log("Daemon starting...");
+
         let http_addr = SocketAddr::from(([0, 0, 0, 0], 80));
         let https_addr = SocketAddr::from(([0, 0, 0, 0], 443));
 
@@ -51,6 +55,7 @@ impl Server {
             "Failed to bind to port 80. Is another service using it? Try: sudo lsof -i :80",
         )?;
 
+        let _ = log.log(&format!("HTTP server listening on {}", http_addr));
         println!("HTTP server listening on {}", http_addr);
 
         let http_server = tokio::spawn(async move {
@@ -66,6 +71,7 @@ impl Server {
                 "Failed to bind to port 443. Is another service using it? Try: sudo lsof -i :443",
             )?;
 
+            let _ = log.log(&format!("HTTPS server listening on {}", https_addr));
             println!("HTTPS server listening on {}", https_addr);
 
             let https_server = tokio::spawn(async move {

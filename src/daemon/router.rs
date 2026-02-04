@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
+    Router,
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::any,
-    Router,
 };
 
 use crate::domain::{DomainRegistration, Target};

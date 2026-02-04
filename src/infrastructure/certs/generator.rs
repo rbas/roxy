@@ -1,4 +1,6 @@
-use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType, PKCS_ECDSA_P256_SHA256};
+use rcgen::{
+    CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P256_SHA256, SanType,
+};
 use std::fs;
 use std::path::PathBuf;
 use time::{Duration, OffsetDateTime};

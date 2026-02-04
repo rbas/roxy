@@ -12,6 +12,10 @@ mod infrastructure;
 #[command(about = "Local development proxy with custom .roxy domains and HTTPS")]
 #[command(version)]
 struct Cli {
+    /// Enable verbose output
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -70,10 +74,27 @@ enum Commands {
 
     /// Show daemon and domain status
     Status,
+
+    /// View daemon logs
+    Logs {
+        /// Number of lines to show
+        #[arg(short = 'n', long, default_value = "50")]
+        lines: usize,
+
+        /// Clear all logs
+        #[arg(long)]
+        clear: bool,
+    },
+
+    /// Reload daemon configuration
+    Reload,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Note: verbose flag is available as cli.verbose for future use
+    let _ = cli.verbose;
 
     match cli.command {
         Commands::Install => cli::install::execute(),
@@ -85,5 +106,7 @@ fn main() -> Result<()> {
         Commands::Stop => cli::stop::execute(),
         Commands::Restart => cli::restart::execute(),
         Commands::Status => cli::status::execute(),
+        Commands::Logs { lines, clear } => cli::logs::execute(lines, clear),
+        Commands::Reload => cli::reload::execute(),
     }
 }

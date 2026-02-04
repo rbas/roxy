@@ -1,4 +1,4 @@
-use super::trust_store::{get_trust_store, TrustStore};
+use super::trust_store::{TrustStore, get_trust_store};
 use super::{CertError, CertificateGenerator};
 use crate::domain::DomainName;
 

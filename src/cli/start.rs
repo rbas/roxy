@@ -1,7 +1,8 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::env;
 use std::process::{Command, Stdio};
 
+use crate::infrastructure::logging::LogFile;
 use crate::infrastructure::pid::PidFile;
 
 pub fn execute(foreground: bool) -> Result<()> {
@@ -42,6 +43,9 @@ pub fn execute(foreground: bool) -> Result<()> {
 async fn run_server() -> Result<()> {
     use crate::daemon::Server;
     use crate::infrastructure::pid::PidFile;
+
+    let log = LogFile::new();
+    let _ = log.log("Roxy daemon started");
 
     let pid_file = PidFile::new();
     pid_file.write()?;

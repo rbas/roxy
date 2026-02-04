@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::domain::DomainName;
 use crate::infrastructure::certs::CertificateService;

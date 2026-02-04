@@ -39,6 +39,8 @@ pub enum CertError {
     #[error("Trust store operation failed: {0}")]
     TrustStoreError(String),
 
-    #[error("Permission denied. Trust store modification requires root privileges.\nRun with: sudo roxy register <domain> ...")]
+    #[error(
+        "Permission denied. Trust store modification requires root privileges.\nRun with: sudo roxy register <domain> ..."
+    )]
     PermissionDenied,
 }

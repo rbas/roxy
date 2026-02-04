@@ -33,3 +33,6 @@ rustls-pemfile = "2"
 
 # Signal handling
 ctrlc = "3.4"
+
+# Utilities
+humantime = "2.1"

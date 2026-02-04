@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::ServerConfig;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::TlsAcceptor;
 
 use crate::domain::DomainName;
@@ -54,8 +54,8 @@ fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
 }
 
 fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
-    let file = File::open(path)
-        .with_context(|| format!("Failed to open key file: {}", path.display()))?;
+    let file =
+        File::open(path).with_context(|| format!("Failed to open key file: {}", path.display()))?;
     let mut reader = BufReader::new(file);
 
     let key = rustls_pemfile::private_key(&mut reader)

@@ -21,7 +21,7 @@ impl TrustStore for MacOsTrustStore {
         let output = Command::new("security")
             .args([
                 "add-trusted-cert",
-                "-d",        // Add to admin cert store
+                "-d", // Add to admin cert store
                 "-r",
                 "trustRoot", // Trust as root certificate
                 "-k",
