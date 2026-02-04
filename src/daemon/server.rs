@@ -14,19 +14,26 @@ use crate::infrastructure::logging::LogFile;
 pub struct Server {
     state: Arc<AppState>,
     tls_acceptor: Option<TlsAcceptor>,
+    http_port: u16,
+    https_port: u16,
 }
 
 impl Server {
     pub fn new() -> Result<Self> {
+        let config_store = ConfigStore::new();
+        let config = config_store.load()?;
+
+        // Validate config before starting
+        config.validate()?;
+
         let state = Arc::new(AppState::new()?);
 
         // Get domains with HTTPS enabled
-        let config_store = ConfigStore::new();
-        let https_domains: Vec<DomainName> = config_store
-            .list_domains()?
-            .into_iter()
+        let https_domains: Vec<DomainName> = config
+            .domains
+            .values()
             .filter(|d| d.https_enabled)
-            .map(|d| d.domain)
+            .map(|d| d.domain.clone())
             .collect();
 
         let tls_acceptor = create_tls_acceptor(&https_domains)?;
@@ -34,6 +41,8 @@ impl Server {
         Ok(Self {
             state,
             tls_acceptor,
+            http_port: config.daemon.http_port,
+            https_port: config.daemon.https_port,
         })
     }
 
@@ -41,8 +50,8 @@ impl Server {
         let log = LogFile::new();
         let _ = log.log("Daemon starting...");
 
-        let http_addr = SocketAddr::from(([0, 0, 0, 0], 80));
-        let https_addr = SocketAddr::from(([0, 0, 0, 0], 443));
+        let http_addr = SocketAddr::from(([0, 0, 0, 0], self.http_port));
+        let https_addr = SocketAddr::from(([0, 0, 0, 0], self.https_port));
 
         // Start HTTP server (redirects to HTTPS if TLS available, otherwise serves directly)
         let http_router = if self.tls_acceptor.is_some() {
@@ -51,9 +60,10 @@ impl Server {
             create_router(self.state.clone())
         };
 
-        let http_listener = TcpListener::bind(http_addr).await.context(
-            "Failed to bind to port 80. Is another service using it? Try: sudo lsof -i :80",
-        )?;
+        let http_listener = TcpListener::bind(http_addr).await.context(format!(
+            "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
+            self.http_port, self.http_port
+        ))?;
 
         let _ = log.log(&format!("HTTP server listening on {}", http_addr));
         println!("HTTP server listening on {}", http_addr);
@@ -67,9 +77,10 @@ impl Server {
         // Start HTTPS server if TLS is available
         if let Some(tls_acceptor) = self.tls_acceptor {
             let https_router = create_router(self.state);
-            let https_listener = TcpListener::bind(https_addr).await.context(
-                "Failed to bind to port 443. Is another service using it? Try: sudo lsof -i :443",
-            )?;
+            let https_listener = TcpListener::bind(https_addr).await.context(format!(
+                "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
+                self.https_port, self.https_port
+            ))?;
 
             let _ = log.log(&format!("HTTPS server listening on {}", https_addr));
             println!("HTTPS server listening on {}", https_addr);

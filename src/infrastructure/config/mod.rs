@@ -20,12 +20,96 @@ pub enum ConfigError {
 
     #[error("Domain not found: {0}")]
     DomainNotFound(String),
+
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
+
+    #[error("Invalid domain '{0}': {1}")]
+    InvalidDomain(String, String),
+}
+
+fn default_http_port() -> u16 {
+    80
+}
+
+fn default_https_port() -> u16 {
+    443
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DaemonConfig {
+    #[serde(default = "default_http_port")]
+    pub http_port: u16,
+
+    #[serde(default = "default_https_port")]
+    pub https_port: u16,
+
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            http_port: default_http_port(),
+            https_port: default_https_port(),
+            log_level: default_log_level(),
+        }
+    }
+}
+
+impl DaemonConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.http_port == 0 {
+            return Err(ConfigError::InvalidConfig("http_port cannot be 0".into()));
+        }
+        if self.https_port == 0 {
+            return Err(ConfigError::InvalidConfig("https_port cannot be 0".into()));
+        }
+        if self.http_port == self.https_port {
+            return Err(ConfigError::InvalidConfig(
+                "http_port and https_port must be different".into(),
+            ));
+        }
+
+        let valid_levels = ["error", "warn", "info", "debug"];
+        if !valid_levels.contains(&self.log_level.as_str()) {
+            return Err(ConfigError::InvalidConfig(format!(
+                "Invalid log_level '{}'. Must be one of: {}",
+                self.log_level,
+                valid_levels.join(", ")
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     #[serde(default)]
+    pub daemon: DaemonConfig,
+
+    #[serde(default)]
     pub domains: HashMap<String, DomainRegistration>,
+}
+
+impl Config {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        self.daemon.validate()?;
+
+        for (name, registration) in &self.domains {
+            registration
+                .validate()
+                .map_err(|e| ConfigError::InvalidDomain(name.clone(), e.to_string()))?;
+        }
+
+        Ok(())
+    }
 }
 
 pub struct ConfigStore {

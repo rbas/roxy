@@ -1,7 +1,8 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::env;
 use std::process::{Command, Stdio};
 
+use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::logging::LogFile;
 use crate::infrastructure::pid::PidFile;
 
@@ -15,6 +16,16 @@ pub fn execute(foreground: bool) -> Result<()> {
             pid
         );
     }
+
+    // Validate configuration before starting
+    let config_store = ConfigStore::new();
+    let config = config_store
+        .load()
+        .context("Failed to load configuration")?;
+
+    config
+        .validate()
+        .context("Configuration validation failed")?;
 
     if foreground {
         // Run in foreground (blocking)
@@ -31,7 +42,10 @@ pub fn execute(foreground: bool) -> Result<()> {
             .spawn()?;
 
         println!("Roxy daemon started (PID: {})", child.id());
-        println!("Listening on http://localhost:80 and https://localhost:443");
+        println!(
+            "Listening on http://localhost:{} and https://localhost:{}",
+            config.daemon.http_port, config.daemon.https_port
+        );
         println!("\nUse 'roxy status' to check status");
         println!("Use 'roxy stop' to stop the daemon");
 
