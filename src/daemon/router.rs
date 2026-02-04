@@ -71,14 +71,7 @@ async fn handle_request(State(state): State<Arc<AppState>>, request: Request) ->
     let registration = match state.get_domain(&host) {
         Some(r) => r,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!(
-                    "Domain '{}' is not registered.\nRegister it with: roxy register {} --port <port>",
-                    host, host
-                ),
-            )
-                .into_response();
+            return build_not_registered_response(&host);
         }
     };
 
@@ -108,4 +101,42 @@ async fn redirect_to_https(request: Request) -> impl IntoResponse {
     let https_url = format!("https://{}{}{}", domain, path, query);
 
     Redirect::permanent(&https_url)
+}
+
+fn build_not_registered_response(domain: &str) -> Response {
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Domain Not Registered - Roxy</title>
+    <style>
+        body {{ font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 100px auto; padding: 20px; line-height: 1.6; }}
+        h1 {{ color: #e74c3c; margin-bottom: 24px; }}
+        code {{ background: #f4f4f4; padding: 2px 8px; border-radius: 4px; font-family: 'SF Mono', Menlo, monospace; }}
+        .command {{ background: #2d2d2d; color: #f8f8f2; padding: 16px; border-radius: 8px; margin: 16px 0; font-family: 'SF Mono', Menlo, monospace; font-size: 14px; }}
+        .command small {{ color: #888; }}
+        p {{ color: #444; }}
+    </style>
+</head>
+<body>
+    <h1>Domain Not Registered</h1>
+    <p>The domain <code>{domain}</code> is not registered with Roxy.</p>
+    <p>To register this domain, run:</p>
+    <div class="command">
+        roxy register {domain} --port 3000<br>
+        <small># or for static files:</small><br>
+        roxy register {domain} --path /path/to/static/files
+    </div>
+    <p>Then restart the Roxy daemon:</p>
+    <div class="command">roxy restart</div>
+</body>
+</html>"#,
+        domain = domain
+    );
+
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(axum::body::Body::from(html))
+        .unwrap()
 }

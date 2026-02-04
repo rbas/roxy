@@ -1,3 +1,4 @@
+pub mod dns_server;
 pub mod proxy;
 pub mod router;
 pub mod server;

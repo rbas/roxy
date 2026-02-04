@@ -7,7 +7,6 @@ use std::time::Duration;
 
 const RESOLVER_DIR: &str = "/etc/resolver";
 const RESOLVER_FILE: &str = "/etc/resolver/roxy";
-const RESOLVER_CONTENT: &str = "nameserver 127.0.0.1\n";
 
 pub struct MacOsDnsService;
 
@@ -41,10 +40,15 @@ impl Default for MacOsDnsService {
 }
 
 impl DnsService for MacOsDnsService {
-    fn setup(&self) -> Result<(), DnsError> {
+    fn setup(&self, port: u16) -> Result<(), DnsError> {
         self.ensure_resolver_dir()?;
 
-        fs::write(RESOLVER_FILE, RESOLVER_CONTENT).map_err(|e| {
+        let content = format!(
+            "nameserver 127.0.0.1\nnameserver ::1\nport {}\n",
+            port
+        );
+
+        fs::write(RESOLVER_FILE, content).map_err(|e| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
                 DnsError::PermissionDenied
             } else {
@@ -136,12 +140,16 @@ impl DnsService for MacOsDnsService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_resolver_content_format() {
-        assert!(RESOLVER_CONTENT.ends_with('\n'));
-        assert!(RESOLVER_CONTENT.contains("nameserver"));
-        assert!(RESOLVER_CONTENT.contains("127.0.0.1"));
+        let content = format!(
+            "nameserver 127.0.0.1\nnameserver ::1\nport {}\n",
+            1053
+        );
+        assert!(content.ends_with('\n'));
+        assert!(content.contains("nameserver"));
+        assert!(content.contains("127.0.0.1"));
+        assert!(content.contains("::1"));
+        assert!(content.contains("port 1053"));
     }
 }

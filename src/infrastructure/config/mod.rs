@@ -36,6 +36,10 @@ fn default_https_port() -> u16 {
     443
 }
 
+fn default_dns_port() -> u16 {
+    1053
+}
+
 fn default_log_level() -> String {
     "info".to_string()
 }
@@ -48,6 +52,9 @@ pub struct DaemonConfig {
     #[serde(default = "default_https_port")]
     pub https_port: u16,
 
+    #[serde(default = "default_dns_port")]
+    pub dns_port: u16,
+
     #[serde(default = "default_log_level")]
     pub log_level: String,
 }
@@ -57,6 +64,7 @@ impl Default for DaemonConfig {
         Self {
             http_port: default_http_port(),
             https_port: default_https_port(),
+            dns_port: default_dns_port(),
             log_level: default_log_level(),
         }
     }
@@ -70,9 +78,20 @@ impl DaemonConfig {
         if self.https_port == 0 {
             return Err(ConfigError::InvalidConfig("https_port cannot be 0".into()));
         }
+        if self.dns_port == 0 {
+            return Err(ConfigError::InvalidConfig("dns_port cannot be 0".into()));
+        }
         if self.http_port == self.https_port {
             return Err(ConfigError::InvalidConfig(
                 "http_port and https_port must be different".into(),
+            ));
+        }
+
+        let ports = [self.http_port, self.https_port, self.dns_port];
+        let unique_ports: std::collections::HashSet<_> = ports.iter().collect();
+        if unique_ports.len() != ports.len() {
+            return Err(ConfigError::InvalidConfig(
+                "http_port, https_port, and dns_port must all be different".into(),
             ));
         }
 

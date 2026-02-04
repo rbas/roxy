@@ -13,7 +13,7 @@ fn test_dns_setup_and_cleanup() {
     assert!(!dns.is_configured());
 
     // Setup
-    dns.setup().unwrap();
+    dns.setup(1053).unwrap();
     assert!(dns.is_configured());
 
     // Validate

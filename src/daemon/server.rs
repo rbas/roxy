@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
+use super::dns_server::DnsServer;
 use super::router::{AppState, create_http_redirect_router, create_router};
 use super::tls::create_tls_acceptor;
 use crate::domain::DomainName;
@@ -16,6 +17,7 @@ pub struct Server {
     tls_acceptor: Option<TlsAcceptor>,
     http_port: u16,
     https_port: u16,
+    dns_port: u16,
 }
 
 impl Server {
@@ -43,12 +45,21 @@ impl Server {
             tls_acceptor,
             http_port: config.daemon.http_port,
             https_port: config.daemon.https_port,
+            dns_port: config.daemon.dns_port,
         })
     }
 
     pub async fn run(self) -> Result<()> {
         let log = LogFile::new();
         let _ = log.log("Daemon starting...");
+
+        // Start DNS server
+        let dns_server = DnsServer::new(self.dns_port);
+        let dns_handle = tokio::spawn(async move {
+            if let Err(e) = dns_server.run().await {
+                eprintln!("DNS server error: {}", e);
+            }
+        });
 
         let http_addr = SocketAddr::from(([0, 0, 0, 0], self.http_port));
         let https_addr = SocketAddr::from(([0, 0, 0, 0], self.https_port));
@@ -126,11 +137,15 @@ impl Server {
             tokio::select! {
                 r = http_server => r??,
                 _ = https_server => {},
+                _ = dns_handle => {},
             }
         } else {
             println!("Warning: No HTTPS certificates found. Running HTTP only.");
             println!("Register a domain with sudo to enable HTTPS.");
-            http_server.await??;
+            tokio::select! {
+                r = http_server => r??,
+                _ = dns_handle => {},
+            }
         }
 
         Ok(())

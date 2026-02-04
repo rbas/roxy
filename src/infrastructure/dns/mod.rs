@@ -30,7 +30,8 @@ pub enum DnsError {
 
 pub trait DnsService {
     /// Configure wildcard DNS for *.roxy → 127.0.0.1
-    fn setup(&self) -> Result<(), DnsError>;
+    /// The port parameter specifies which port the DNS server listens on
+    fn setup(&self, port: u16) -> Result<(), DnsError>;
 
     /// Remove DNS configuration
     fn cleanup(&self) -> Result<(), DnsError>;

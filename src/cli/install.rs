@@ -1,9 +1,14 @@
 use anyhow::Result;
 
+use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::dns::{DnsService, get_dns_service};
 
 pub fn execute() -> Result<()> {
     println!("Setting up Roxy...\n");
+
+    let config_store = ConfigStore::new();
+    let config = config_store.load()?;
+    let dns_port = config.daemon.dns_port;
 
     let dns = get_dns_service()?;
 
@@ -11,8 +16,8 @@ pub fn execute() -> Result<()> {
     if dns.is_configured() {
         println!("  DNS already configured, skipping...");
     } else {
-        println!("  Configuring DNS for *.roxy domains...");
-        dns.setup()?;
+        println!("  Configuring DNS for *.roxy domains (port {})...", dns_port);
+        dns.setup(dns_port)?;
         println!("  DNS configured successfully.");
     }
 

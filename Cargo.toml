@@ -36,3 +36,6 @@ ctrlc = "3.4"
 
 # Utilities
 humantime = "2.1"
+
+# DNS
+simple-dns = "0.9"
