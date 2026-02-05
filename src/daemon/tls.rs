@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use rustls::server::ResolvesServerCert;
+use rustls::sign::CertifiedKey;
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::TlsAcceptor;
@@ -11,22 +14,24 @@ use tokio_rustls::TlsAcceptor;
 use crate::domain::DomainName;
 use crate::infrastructure::certs::CertificateGenerator;
 
-/// Load TLS configuration for a domain
-pub fn load_tls_config(domain: &DomainName) -> Result<ServerConfig> {
-    let generator = CertificateGenerator::new();
-    let paths = generator
-        .get_paths(domain)
-        .ok_or_else(|| anyhow::anyhow!("No certificate found for {}", domain))?;
+/// Custom certificate resolver that selects certificates based on SNI hostname
+#[derive(Debug)]
+struct DomainCertResolver {
+    certs: HashMap<String, Arc<CertifiedKey>>,
+    fallback: Arc<CertifiedKey>,
+}
 
-    let certs = load_certs(&paths.cert)?;
-    let key = load_private_key(&paths.key)?;
+impl ResolvesServerCert for DomainCertResolver {
+    fn resolve(&self, client_hello: rustls::server::ClientHello) -> Option<Arc<CertifiedKey>> {
+        // Get the SNI hostname from the client hello
+        let hostname = client_hello.server_name()?;
 
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .context("Failed to create TLS config")?;
-
-    Ok(config)
+        // Look up certificate for this domain, fall back to first cert if not found
+        self.certs
+            .get(hostname)
+            .cloned()
+            .or_else(|| Some(self.fallback.clone()))
+    }
 }
 
 /// Load all domain certificates into a single TLS acceptor with SNI
@@ -35,9 +40,41 @@ pub fn create_tls_acceptor(domains: &[DomainName]) -> Result<Option<TlsAcceptor>
         return Ok(None);
     }
 
-    // For simplicity, use the first domain's cert
-    // TODO: Implement proper SNI with multiple certs
-    let config = load_tls_config(&domains[0])?;
+    let mut certs_map = HashMap::new();
+    let generator = CertificateGenerator::new();
+
+    // Load all domain certificates
+    for domain in domains {
+        let paths = generator
+            .get_paths(domain)
+            .ok_or_else(|| anyhow::anyhow!("No certificate found for {}", domain))?;
+
+        let certs = load_certs(&paths.cert)?;
+        let key = load_private_key(&paths.key)?;
+
+        // Create a signing key using aws-lc-rs (default crypto provider)
+        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key)
+            .context("Failed to create signing key")?;
+
+        let certified_key = Arc::new(CertifiedKey::new(certs, signing_key));
+        certs_map.insert(domain.as_str().to_string(), certified_key);
+    }
+
+    // Use the first domain's cert as fallback
+    let fallback = certs_map
+        .get(domains[0].as_str())
+        .ok_or_else(|| anyhow::anyhow!("No fallback certificate available"))?
+        .clone();
+
+    let resolver = Arc::new(DomainCertResolver {
+        certs: certs_map,
+        fallback,
+    });
+
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_cert_resolver(resolver);
+
     Ok(Some(TlsAcceptor::from(Arc::new(config))))
 }
 
