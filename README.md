@@ -4,6 +4,9 @@
 
 A lightweight local dev proxy — custom domains and auto HTTPS for your localhost.
 
+> **Early development** — Roxy is still finding her feet. Things may shift around.
+> If something bites, [let me know](https://github.com/rbas/roxy/issues)!
+
 ---
 
 ## Why?
@@ -118,12 +121,23 @@ roxy logs -n 100      # Last 100 lines
    forwarding them to the right local service. WebSocket connections are fully
    supported.
 
+For configuration details, logging options, and file locations see the
+[full documentation](docs/README.md).
+
 ## Requirements
 
 - **macOS** (Linux support planned)
 - **Rust** (for building from source)
 - **sudo** for install/start (needs ports 80/443 and DNS configuration)
 
+## Roadmap
+
+- [] Linux support
+- [] Docker private network DNS — resolve `.roxy` domains
+  inside containers without manual `extra_hosts`
+- [] Wildcard subdomains (e.g., `*.myapp.roxy`)
+- [] Auto-start on boot via launchd
+
 ## License
 
-MIT
+[MIT](LICENSE.md) — Martin Voldrich
