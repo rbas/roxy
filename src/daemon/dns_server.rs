@@ -6,8 +6,7 @@ use simple_dns::rdata::{A, AAAA, RData};
 use simple_dns::{CLASS, Name, Packet, PacketFlag, QTYPE, Question, RCODE, ResourceRecord, TYPE};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-
-use crate::infrastructure::logging::LogFile;
+use tracing::{debug, info};
 
 /// Resolves .roxy domains to the configured LAN IP.
 #[derive(Clone)]
@@ -42,8 +41,6 @@ impl DnsServer {
     }
 
     pub async fn run(&self) -> Result<()> {
-        let log = LogFile::new();
-
         // Bind to all interfaces so Docker containers can reach us directly
         let ipv4_addr = SocketAddr::from(([0, 0, 0, 0], self.port));
         let ipv6_addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, self.port));
@@ -56,17 +53,11 @@ impl DnsServer {
         let tcp_v4 = TcpListener::bind(ipv4_addr).await?;
         let tcp_v6 = TcpListener::bind(ipv6_addr).await?;
 
-        let _ = log.log(&format!("DNS server listening on {} (UDP/TCP)", ipv4_addr));
-        let _ = log.log(&format!("DNS server listening on {} (UDP/TCP)", ipv6_addr));
-        let _ = log.log(&format!(
-            "DNS resolving all .roxy domains to {}",
-            self.ip_resolver.lan_ip
-        ));
-        println!("DNS server listening on {} (UDP/TCP)", ipv4_addr);
-        println!("DNS server listening on {} (UDP/TCP)", ipv6_addr);
-        println!(
-            "DNS resolving all .roxy domains to {}",
-            self.ip_resolver.lan_ip
+        info!(
+            ipv4 = %ipv4_addr,
+            ipv6 = %ipv6_addr,
+            response_ip = %self.ip_resolver.lan_ip,
+            "DNS server listening"
         );
 
         let ttl = self.ttl;
@@ -140,8 +131,16 @@ fn handle_query(query: &[u8], ttl: u32, response_ip: Ipv4Addr) -> Vec<u8> {
 
     // Check if domain ends with .roxy
     if !domain.trim_end_matches('.').ends_with(".roxy") {
+        debug!(domain = %domain, "DNS refused (not .roxy)");
         return build_refused_response(&packet);
     }
+
+    info!(
+        domain = %domain,
+        qtype = ?question.qtype,
+        response = %response_ip,
+        "DNS query"
+    );
 
     // Build response based on query type
     match question.qtype {

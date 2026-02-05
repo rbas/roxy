@@ -86,6 +86,10 @@ enum Commands {
         /// Clear all logs
         #[arg(long)]
         clear: bool,
+
+        /// Follow log output (like tail -f)
+        #[arg(short = 'f', long)]
+        follow: bool,
     },
 
     /// Reload daemon configuration
@@ -125,9 +129,6 @@ enum RouteCommands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Note: verbose flag is available as cli.verbose for future use
-    let _ = cli.verbose;
-
     match cli.command {
         Commands::Install => cli::install::execute(),
         Commands::Uninstall { force } => cli::uninstall::execute(force),
@@ -143,11 +144,11 @@ fn main() -> Result<()> {
             RouteCommands::List { domain } => cli::route::list(domain),
         },
         Commands::List => cli::list::execute(),
-        Commands::Start { foreground } => cli::start::execute(foreground),
+        Commands::Start { foreground } => cli::start::execute(foreground, cli.verbose),
         Commands::Stop => cli::stop::execute(),
         Commands::Restart => cli::restart::execute(),
         Commands::Status => cli::status::execute(),
-        Commands::Logs { lines, clear } => cli::logs::execute(lines, clear),
+        Commands::Logs { lines, clear, follow } => cli::logs::execute(lines, clear, follow),
         Commands::Reload => cli::reload::execute(),
     }
 }

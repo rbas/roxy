@@ -18,7 +18,7 @@ pub fn execute() -> Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Start the daemon
-    super::start::execute(false)?;
+    super::start::execute(false, false)?;
 
     println!("Daemon reloaded with updated configuration.");
     Ok(())

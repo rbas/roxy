@@ -4,13 +4,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
+use tracing::{error, info, warn};
 
 use super::dns_server::DnsServer;
 use super::router::{AppState, create_router};
 use super::tls::create_tls_acceptor;
 use crate::domain::DomainName;
 use crate::infrastructure::config::ConfigStore;
-use crate::infrastructure::logging::LogFile;
 use crate::infrastructure::network::get_lan_ip;
 
 pub struct Server {
@@ -56,24 +56,19 @@ impl Server {
     }
 
     pub async fn run(self) -> Result<()> {
-        let log = LogFile::new();
-        let _ = log.log("Daemon starting...");
-
-        // Log LAN IP for debugging
-        let _ = log.log(&format!(
-            "DNS will use source-based resolution (LAN IP: {})",
-            self.lan_ip
-        ));
-        println!(
-            "DNS will use source-based resolution (LAN IP: {})",
-            self.lan_ip
+        info!(
+            http = self.http_port,
+            https = self.https_port,
+            dns = self.dns_port,
+            lan_ip = %self.lan_ip,
+            "Roxy daemon starting"
         );
 
         // Start DNS server with LAN IP (handles source-based IP resolution internally)
         let dns_server = DnsServer::new(self.dns_port, self.lan_ip);
         let dns_handle = tokio::spawn(async move {
             if let Err(e) = dns_server.run().await {
-                eprintln!("DNS server error: {}", e);
+                error!(error = %e, "DNS server error");
             }
         });
 
@@ -88,8 +83,7 @@ impl Server {
             self.http_port, self.http_port
         ))?;
 
-        let _ = log.log(&format!("HTTP server listening on {}", http_addr));
-        println!("HTTP server listening on {}", http_addr);
+        info!(addr = %http_addr, "HTTP server listening");
 
         let http_server = tokio::spawn(async move {
             axum::serve(http_listener, http_router)
@@ -105,15 +99,14 @@ impl Server {
                 self.https_port, self.https_port
             ))?;
 
-            let _ = log.log(&format!("HTTPS server listening on {}", https_addr));
-            println!("HTTPS server listening on {}", https_addr);
+            info!(addr = %https_addr, "HTTPS server listening");
 
             let https_server = tokio::spawn(async move {
                 loop {
                     let (stream, _addr) = match https_listener.accept().await {
                         Ok(conn) => conn,
                         Err(e) => {
-                            eprintln!("Failed to accept connection: {}", e);
+                            error!(error = %e, "Failed to accept connection");
                             continue;
                         }
                     };
@@ -125,7 +118,7 @@ impl Server {
                         let stream = match acceptor.accept(stream).await {
                             Ok(s) => s,
                             Err(e) => {
-                                eprintln!("TLS handshake failed: {}", e);
+                                warn!(error = %e, "TLS handshake failed");
                                 return;
                             }
                         };
@@ -140,7 +133,7 @@ impl Server {
                         .serve_connection(io, service)
                         .await
                         {
-                            eprintln!("Error serving connection: {}", e);
+                            error!(error = %e, "Error serving connection");
                         }
                     });
                 }
@@ -152,8 +145,7 @@ impl Server {
                 _ = dns_handle => {},
             }
         } else {
-            println!("Warning: No HTTPS certificates found. Running HTTP only.");
-            println!("Register a domain with sudo to enable HTTPS.");
+            warn!("No HTTPS certificates found, running HTTP only. Register a domain with sudo to enable HTTPS.");
             tokio::select! {
                 r = http_server => r??,
                 _ = dns_handle => {},

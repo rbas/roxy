@@ -3,11 +3,10 @@ use std::env;
 use std::process::{Command, Stdio};
 
 use crate::infrastructure::config::ConfigStore;
-use crate::infrastructure::logging::LogFile;
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::pid::PidFile;
 
-pub fn execute(foreground: bool) -> Result<()> {
+pub fn execute(foreground: bool, verbose: bool) -> Result<()> {
     let pid_file = PidFile::new();
 
     // Check if already running
@@ -30,13 +29,20 @@ pub fn execute(foreground: bool) -> Result<()> {
 
     if foreground {
         // Run in foreground (blocking)
-        run_server()
+        run_server(verbose)
     } else {
         // Fork to background
         let exe = env::current_exe()?;
 
-        let child = Command::new(exe)
-            .args(["start", "--foreground"])
+        let mut cmd = Command::new(exe);
+        cmd.args(["start", "--foreground"]);
+
+        // Pass verbose flag via environment to subprocess
+        if verbose {
+            cmd.env("ROXY_LOG", "debug");
+        }
+
+        let child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -60,12 +66,24 @@ pub fn execute(foreground: bool) -> Result<()> {
 }
 
 #[tokio::main]
-async fn run_server() -> Result<()> {
+async fn run_server(verbose: bool) -> Result<()> {
+    use std::io::IsTerminal;
+
     use crate::daemon::Server;
     use crate::infrastructure::pid::PidFile;
+    use crate::infrastructure::tracing::{TracingOutput, default_log_path, init_tracing};
+    use tracing::info;
 
-    let log = LogFile::new();
-    let _ = log.log("Roxy daemon started");
+    // When running interactively (stdout is a TTY), log to stdout
+    // When running as daemon (stdout is /dev/null), log to file
+    let output = if std::io::stdout().is_terminal() {
+        TracingOutput::Stdout
+    } else {
+        TracingOutput::File(default_log_path())
+    };
+    init_tracing(verbose, output);
+
+    info!("Roxy daemon started");
 
     let pid_file = PidFile::new();
     pid_file.write()?;

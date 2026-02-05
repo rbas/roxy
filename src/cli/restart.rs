@@ -13,5 +13,5 @@ pub fn execute() -> Result<()> {
     }
 
     println!("Starting Roxy daemon...");
-    start::execute(false)
+    start::execute(false, false)
 }

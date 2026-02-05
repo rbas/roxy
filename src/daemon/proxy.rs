@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use axum::{
     body::Body,
     extract::Request,
@@ -9,6 +11,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tracing::{debug, info, warn};
 
 use crate::domain::ProxyTarget;
 
@@ -54,9 +57,11 @@ fn build_upgrade_request(request: &Request, target: &ProxyTarget) -> String {
 async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
     // Connect to backend
     let backend_addr = format!("{}:{}", target.host(), target.port());
+    debug!(target = %target, "Connecting to backend for WebSocket");
     let mut backend = match TcpStream::connect(&backend_addr).await {
         Ok(s) => s,
         Err(_) => {
+            warn!(target = %target, "WebSocket backend connection failed");
             return (
                 StatusCode::BAD_GATEWAY,
                 format!("Cannot connect to service at {}", target),
@@ -64,6 +69,7 @@ async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
                 .into_response();
         }
     };
+    let start_time = Instant::now();
 
     // Build and send the upgrade request to backend
     let upgrade_request = build_upgrade_request(&request, target);
@@ -75,6 +81,7 @@ async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
         )
             .into_response();
     }
+    debug!(target = %target, "WebSocket upgrade request sent to backend");
 
     // Read backend response (101 Switching Protocols expected)
     let mut response_buf = vec![0u8; 4096];
@@ -92,6 +99,7 @@ async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
     // Verify we got 101 Switching Protocols
     let response_str = String::from_utf8_lossy(&response_buf[..n]);
     if !response_str.contains("101") {
+        warn!(target = %target, "Backend rejected WebSocket upgrade");
         return (
             StatusCode::BAD_GATEWAY,
             "Backend rejected WebSocket upgrade",
@@ -108,6 +116,11 @@ async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
 
     // Get the OnUpgrade handle from the request
     let on_upgrade = hyper::upgrade::on(request);
+
+    info!(target = %target, "WebSocket connection established");
+
+    // Clone target for the spawned task
+    let target_str = target.to_string();
 
     // Spawn task to handle the bidirectional copy after upgrade
     tokio::spawn(async move {
@@ -145,13 +158,25 @@ async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
                     }
                 };
 
-                tokio::select! {
-                    _ = client_to_backend => {},
-                    _ = backend_to_client => {},
-                }
+                let closed_by = tokio::select! {
+                    _ = client_to_backend => "client",
+                    _ = backend_to_client => "backend",
+                };
+
+                let duration = start_time.elapsed();
+                info!(
+                    target = %target_str,
+                    duration_ms = duration.as_millis() as u64,
+                    "WebSocket connection closed"
+                );
+                debug!(
+                    target = %target_str,
+                    closed_by = closed_by,
+                    "WebSocket close details"
+                );
             }
             Err(e) => {
-                eprintln!("WebSocket upgrade error: {}", e);
+                warn!(target = %target_str, error = %e, "WebSocket upgrade failed");
             }
         }
     });
@@ -173,8 +198,11 @@ async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
 pub async fn proxy_request(target: &ProxyTarget, request: Request) -> Response {
     // Check for WebSocket upgrade
     if is_websocket_upgrade(&request) {
+        debug!(target = %target, "Proxying WebSocket request");
         return proxy_websocket(target, request).await;
     }
+
+    debug!(target = %target, "Proxying HTTP request");
 
     // Regular HTTP proxy
     let mut connector = HttpConnector::new();
@@ -207,6 +235,7 @@ pub async fn proxy_request(target: &ProxyTarget, request: Request) -> Response {
     // Forward the request
     match client.request(request).await {
         Ok(response) => {
+            debug!(target = %target, status = %response.status(), "Proxy response");
             let (parts, body) = response.into_parts();
             Response::from_parts(parts, Body::new(body))
         }
@@ -214,12 +243,14 @@ pub async fn proxy_request(target: &ProxyTarget, request: Request) -> Response {
             // Check if it's a connection error (service not running)
             let error_msg = e.to_string();
             if error_msg.contains("Connection refused") {
+                warn!(target = %target, "Service not running");
                 (
                     StatusCode::BAD_GATEWAY,
                     format!("Service not running at {}", target),
                 )
                     .into_response()
             } else {
+                warn!(target = %target, error = %e, "Proxy failed");
                 (StatusCode::BAD_GATEWAY, format!("Proxy error: {}", e)).into_response()
             }
         }

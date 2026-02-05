@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::any,
 };
+use tracing::{debug, info};
 
 use crate::domain::{DomainRegistration, RouteTarget};
 use crate::infrastructure::config::ConfigStore;
@@ -59,6 +60,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
 /// Handle all incoming requests
 async fn handle_request(State(state): State<Arc<AppState>>, request: Request) -> Response {
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+
     // Extract host from request
     let host = match get_host(&request) {
         Some(h) => h,
@@ -71,24 +75,44 @@ async fn handle_request(State(state): State<Arc<AppState>>, request: Request) ->
     let registration = match state.get_domain(&host) {
         Some(r) => r,
         None => {
+            info!(host = %host, "Domain not registered");
             return build_not_registered_response(&host);
         }
     };
 
     // Match route by path (longest prefix wins)
-    let path = request.uri().path();
+    let path = uri.path();
     let route = match registration.match_route(path) {
         Some(r) => r,
         None => {
+            info!(host = %host, path = %path, "No route found");
             return build_no_route_response(&host, path);
         }
     };
 
+    debug!(
+        method = %method,
+        host = %host,
+        path = %path,
+        route = %route.path,
+        "Routing request"
+    );
+
     // Route to appropriate backend based on target type
-    match &route.target {
+    let response = match &route.target {
         RouteTarget::StaticFiles(dir) => serve_static(dir.clone(), request).await,
         RouteTarget::Proxy(target) => proxy_request(target, request).await,
-    }
+    };
+
+    info!(
+        method = %method,
+        host = %host,
+        path = %path,
+        status = response.status().as_u16(),
+        "Request completed"
+    );
+
+    response
 }
 
 fn build_not_registered_response(domain: &str) -> Response {

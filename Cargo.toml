@@ -37,5 +37,9 @@ ctrlc = "3.4"
 # Utilities
 humantime = "2.1"
 
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 # DNS
 simple-dns = "0.9"
