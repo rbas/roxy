@@ -180,3 +180,7 @@ Roxy is in early development — things may shift around. If something bites,
 ## License
 
 [MIT](LICENSE.md) — Martin Voldrich
+
+---
+
+Having issues? Check the [troubleshooting guide](docs/README.md#troubleshooting).

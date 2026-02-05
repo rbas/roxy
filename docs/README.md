@@ -209,3 +209,68 @@ The container can now reach `http://myservice.roxy` or
 
 Add one entry per `.roxy` domain the container needs
 to access.
+
+## Troubleshooting
+
+### Browser Shows "Not Secure" or Certificate Warnings
+
+**If you installed Roxy with your browser already open**, the browser won't
+immediately pick up the newly trusted Root CA from the system keychain.
+
+**Solution:** Restart your browser completely after running `sudo roxy install`.
+Browsers cache the trusted certificate list at startup.
+
+### Certificates Show Wrong Domain Name
+
+If accessing `myapp.roxy` shows a certificate for a different domain, the daemon
+needs to be restarted to pick up newly registered domains.
+
+**Solution:** Run `sudo roxy restart` after registering new domains.
+
+### "Connection Refused" or "This site can't be reached"
+
+Check if the daemon is running:
+```bash
+roxy status
+```
+
+If it's not running, start it:
+```bash
+sudo roxy start
+```
+
+Verify DNS is working:
+```bash
+dig myapp.roxy
+# Should show: myapp.roxy. 0 IN A 127.0.0.1
+```
+
+### Port Already in Use
+
+If Roxy can't start because ports 80, 443, or 1053 are in use:
+
+```bash
+# Check what's using port 80 (HTTP)
+sudo lsof -i :80
+
+# Check what's using port 443 (HTTPS)
+sudo lsof -i :443
+
+# Check what's using port 1053 (DNS)
+sudo lsof -i :1053
+```
+
+Stop the conflicting service or configure Roxy to use different ports
+in `~/.roxy/config.toml`.
+
+### Backend Service Not Responding
+
+Make sure your backend service is actually running on the port you configured:
+
+```bash
+# Test if your service is listening
+curl http://localhost:3000
+
+# If that works but https://myapp.roxy doesn't, check Roxy's logs
+roxy logs -f
+```
