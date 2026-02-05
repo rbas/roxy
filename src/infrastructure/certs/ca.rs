@@ -25,6 +25,11 @@ impl RootCA {
         Self { roxy_dir }
     }
 
+    /// Create a RootCA with a custom base directory (useful for testing)
+    pub fn with_base_dir(roxy_dir: PathBuf) -> Self {
+        Self { roxy_dir }
+    }
+
     /// Path to the CA certificate
     pub fn cert_path(&self) -> PathBuf {
         self.roxy_dir.join("ca.crt")

@@ -25,17 +25,25 @@ pub struct CertPaths {
 }
 
 pub struct CertificateGenerator {
+    base_dir: PathBuf,
     certs_dir: PathBuf,
 }
 
 impl CertificateGenerator {
     pub fn new() -> Self {
-        let certs_dir = dirs::home_dir()
+        let base_dir = dirs::home_dir()
             .expect("Could not find home directory")
-            .join(".roxy")
-            .join("certs");
+            .join(".roxy");
 
-        Self { certs_dir }
+        let certs_dir = base_dir.join("certs");
+
+        Self { base_dir, certs_dir }
+    }
+
+    /// Create a CertificateGenerator with a custom base directory (useful for testing)
+    pub fn with_base_dir(base_dir: PathBuf) -> Self {
+        let certs_dir = base_dir.join("certs");
+        Self { base_dir, certs_dir }
     }
 
     /// Returns the directory where certificates are stored
@@ -46,7 +54,7 @@ impl CertificateGenerator {
 
     /// Generate a new certificate for the given domain, signed by the Root CA
     pub fn generate(&self, domain: &DomainName) -> Result<Certificate, CertError> {
-        let ca = RootCA::new();
+        let ca = RootCA::with_base_dir(self.base_dir.clone());
 
         // Ensure CA exists
         if !ca.exists() {
@@ -200,19 +208,21 @@ impl Default for CertificateGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_certificate_generation() {
-        let ca = RootCA::new();
+        // Create an isolated test environment
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let base_dir = temp_dir.path().to_path_buf();
 
-        // Skip test if CA doesn't exist (requires sudo roxy install)
-        if !ca.exists() {
-            eprintln!("Skipping test: Root CA not found. Run 'sudo roxy install' first.");
-            return;
-        }
+        // Generate a test CA in the temp directory
+        let ca = RootCA::with_base_dir(base_dir.clone());
+        ca.generate().expect("Failed to generate test CA");
 
+        // Now test certificate generation
         let domain = DomainName::new("test.roxy").unwrap();
-        let generator = CertificateGenerator::new();
+        let generator = CertificateGenerator::with_base_dir(base_dir);
 
         let cert = generator.generate(&domain).unwrap();
 
