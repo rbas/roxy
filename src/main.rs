@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 
 mod cli;
 mod daemon;
@@ -32,18 +31,15 @@ enum Commands {
         force: bool,
     },
 
-    /// Register a new domain
+    /// Register a new domain with routes
     Register {
         /// Domain name (must end with .roxy)
         domain: String,
 
-        /// Path to serve static files from
-        #[arg(long, conflicts_with = "port")]
-        path: Option<PathBuf>,
-
-        /// Port to proxy requests to
-        #[arg(long, conflicts_with = "path")]
-        port: Option<u16>,
+        /// Route in format PATH=TARGET (e.g., "/=3000" or "/api=3001")
+        /// TARGET can be: port (3000), host:port (192.168.1.50:3000), or path (/var/www)
+        #[arg(long, short = 'r', value_name = "PATH=TARGET", required = true)]
+        route: Vec<String>,
     },
 
     /// Unregister a domain
@@ -54,6 +50,12 @@ enum Commands {
         /// Skip confirmation prompt
         #[arg(long)]
         force: bool,
+    },
+
+    /// Manage routes for a domain
+    Route {
+        #[command(subcommand)]
+        command: RouteCommands,
     },
 
     /// List all registered domains
@@ -90,6 +92,36 @@ enum Commands {
     Reload,
 }
 
+#[derive(Subcommand)]
+enum RouteCommands {
+    /// Add a route to an existing domain
+    Add {
+        /// Domain name
+        domain: String,
+
+        /// Path prefix (e.g., "/api")
+        path: String,
+
+        /// Target: port, host:port, or filesystem path
+        target: String,
+    },
+
+    /// Remove a route from a domain
+    Remove {
+        /// Domain name
+        domain: String,
+
+        /// Path prefix to remove
+        path: String,
+    },
+
+    /// List routes for a domain
+    List {
+        /// Domain name
+        domain: String,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -99,8 +131,17 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Install => cli::install::execute(),
         Commands::Uninstall { force } => cli::uninstall::execute(force),
-        Commands::Register { domain, path, port } => cli::register::execute(domain, path, port),
+        Commands::Register { domain, route } => cli::register::execute(domain, route),
         Commands::Unregister { domain, force } => cli::unregister::execute(domain, force),
+        Commands::Route { command } => match command {
+            RouteCommands::Add {
+                domain,
+                path,
+                target,
+            } => cli::route::add(domain, path, target),
+            RouteCommands::Remove { domain, path } => cli::route::remove(domain, path),
+            RouteCommands::List { domain } => cli::route::list(domain),
+        },
         Commands::List => cli::list::execute(),
         Commands::Start { foreground } => cli::start::execute(foreground),
         Commands::Stop => cli::stop::execute(),

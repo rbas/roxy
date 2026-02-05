@@ -4,6 +4,7 @@ pub mod logs;
 pub mod register;
 pub mod reload;
 pub mod restart;
+pub mod route;
 pub mod start;
 pub mod status;
 pub mod stop;

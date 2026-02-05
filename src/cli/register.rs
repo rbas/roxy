@@ -1,21 +1,23 @@
 use anyhow::{Result, bail};
-use std::path::PathBuf;
 
-use crate::domain::{DomainName, DomainRegistration, Target};
+use crate::domain::{DomainName, DomainRegistration, Route};
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 
-pub fn execute(domain: String, path: Option<PathBuf>, port: Option<u16>) -> Result<()> {
+pub fn execute(domain: String, routes: Vec<String>) -> Result<()> {
     // Validate domain name
     let domain = DomainName::new(&domain)?;
 
-    // Determine target
-    let target = match (path, port) {
-        (Some(p), None) => Target::path(p)?,
-        (None, Some(p)) => Target::port(p)?,
-        (Some(_), Some(_)) => bail!("Cannot specify both --path and --port"),
-        (None, None) => bail!("Must specify either --path or --port"),
-    };
+    // Parse routes
+    if routes.is_empty() {
+        bail!("At least one route is required. Use --route \"/=PORT\" or --route \"/=PATH\"");
+    }
+
+    let parsed_routes: Vec<Route> = routes
+        .iter()
+        .map(|s| Route::parse(s))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("Invalid route: {}", e))?;
 
     let config_store = ConfigStore::new();
     let cert_service = CertificateService::new();
@@ -30,7 +32,7 @@ pub fn execute(domain: String, path: Option<PathBuf>, port: Option<u16>) -> Resu
     }
 
     // Create registration
-    let mut registration = DomainRegistration::new(domain.clone(), target.clone());
+    let mut registration = DomainRegistration::new(domain.clone(), parsed_routes);
 
     // Generate and install certificate
     println!("Generating SSL certificate for {}...", domain);
@@ -48,10 +50,13 @@ pub fn execute(domain: String, path: Option<PathBuf>, port: Option<u16>) -> Resu
     }
 
     // Save to config
-    config_store.add_domain(registration)?;
+    config_store.add_domain(registration.clone())?;
 
     println!("\nRegistered domain: {}", domain);
-    println!("  Target: {}", target);
+    println!("  Routes:");
+    for route in &registration.routes {
+        println!("    {} -> {}", route.path, route.target);
+    }
     println!(
         "  HTTPS: {}",
         if cert_service.exists(&domain) {

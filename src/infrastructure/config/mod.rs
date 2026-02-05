@@ -209,6 +209,18 @@ impl ConfigStore {
         Ok(config.domains.get(domain.as_str()).cloned())
     }
 
+    pub fn update_domain(&self, registration: DomainRegistration) -> Result<(), ConfigError> {
+        let mut config = self.load()?;
+
+        let key = registration.domain.as_str().to_string();
+        if !config.domains.contains_key(&key) {
+            return Err(ConfigError::DomainNotFound(key));
+        }
+
+        config.domains.insert(key, registration);
+        self.save(&config)
+    }
+
     pub fn list_domains(&self) -> Result<Vec<DomainRegistration>, ConfigError> {
         let config = self.load()?;
         Ok(config.domains.into_values().collect())

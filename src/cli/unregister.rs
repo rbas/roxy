@@ -21,7 +21,10 @@ pub fn execute(domain: String, force: bool) -> Result<()> {
     if !force {
         println!("This will unregister the domain:");
         println!("  Domain: {}", registration.domain);
-        println!("  Target: {}", registration.target);
+        println!("  Routes:");
+        for route in &registration.routes {
+            println!("    {} -> {}", route.path, route.target);
+        }
         if registration.https_enabled {
             println!("  HTTPS certificate will be removed from system trust store");
         }

@@ -10,7 +10,7 @@ use hyper_util::rt::TokioExecutor;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::domain::value_objects::Port;
+use crate::domain::ProxyTarget;
 
 /// Check if request is a WebSocket upgrade
 fn is_websocket_upgrade(request: &Request) -> bool {
@@ -23,7 +23,7 @@ fn is_websocket_upgrade(request: &Request) -> bool {
 }
 
 /// Build HTTP upgrade request string to send to backend
-fn build_upgrade_request(request: &Request, port: Port) -> String {
+fn build_upgrade_request(request: &Request, target: &ProxyTarget) -> String {
     let path = request.uri().path();
     let query = request
         .uri()
@@ -32,8 +32,11 @@ fn build_upgrade_request(request: &Request, port: Port) -> String {
         .unwrap_or_default();
 
     let mut req = format!(
-        "GET {}{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n",
-        path, query, port
+        "GET {}{} HTTP/1.1\r\nHost: {}:{}\r\n",
+        path,
+        query,
+        target.host(),
+        target.port()
     );
 
     for (name, value) in request.headers() {
@@ -48,22 +51,22 @@ fn build_upgrade_request(request: &Request, port: Port) -> String {
 }
 
 /// Proxy a WebSocket connection
-async fn proxy_websocket(port: Port, request: Request) -> Response {
+async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
     // Connect to backend
-    let backend_addr = format!("127.0.0.1:{}", port);
+    let backend_addr = format!("{}:{}", target.host(), target.port());
     let mut backend = match TcpStream::connect(&backend_addr).await {
         Ok(s) => s,
         Err(_) => {
             return (
                 StatusCode::BAD_GATEWAY,
-                format!("Cannot connect to service on port {}", port),
+                format!("Cannot connect to service at {}", target),
             )
                 .into_response();
         }
     };
 
     // Build and send the upgrade request to backend
-    let upgrade_request = build_upgrade_request(&request, port);
+    let upgrade_request = build_upgrade_request(&request, target);
 
     if let Err(e) = backend.write_all(upgrade_request.as_bytes()).await {
         return (
@@ -166,11 +169,11 @@ async fn proxy_websocket(port: Port, request: Request) -> Response {
     builder.body(Body::empty()).unwrap()
 }
 
-/// Proxy a request to a local port (supports HTTP/1.1, HTTP/2, and WebSocket)
-pub async fn proxy_request(port: Port, request: Request) -> Response {
+/// Proxy a request to a backend (supports HTTP/1.1, HTTP/2, and WebSocket)
+pub async fn proxy_request(target: &ProxyTarget, request: Request) -> Response {
     // Check for WebSocket upgrade
     if is_websocket_upgrade(&request) {
-        return proxy_websocket(port, request).await;
+        return proxy_websocket(target, request).await;
     }
 
     // Regular HTTP proxy
@@ -179,14 +182,14 @@ pub async fn proxy_request(port: Port, request: Request) -> Response {
 
     let client = Client::builder(TokioExecutor::new()).build(connector);
 
-    // Rewrite the URI to target localhost:port
+    // Rewrite the URI to target the backend
     let path = request.uri().path();
     let query = request
         .uri()
         .query()
         .map(|q| format!("?{}", q))
         .unwrap_or_default();
-    let uri_string = format!("http://127.0.0.1:{}{}{}", port, path, query);
+    let uri_string = format!("http://{}:{}{}{}", target.host(), target.port(), path, query);
 
     let uri: Uri = match uri_string.parse() {
         Ok(u) => u,
@@ -213,7 +216,7 @@ pub async fn proxy_request(port: Port, request: Request) -> Response {
             if error_msg.contains("Connection refused") {
                 (
                     StatusCode::BAD_GATEWAY,
-                    format!("Service not running on port {}", port),
+                    format!("Service not running at {}", target),
                 )
                     .into_response()
             } else {

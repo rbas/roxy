@@ -9,7 +9,7 @@ use axum::{
     routing::any,
 };
 
-use crate::domain::{DomainRegistration, Target};
+use crate::domain::{DomainRegistration, RouteTarget};
 use crate::infrastructure::config::ConfigStore;
 
 use super::proxy::proxy_request;
@@ -75,10 +75,19 @@ async fn handle_request(State(state): State<Arc<AppState>>, request: Request) ->
         }
     };
 
-    // Route based on target type
-    match &registration.target {
-        Target::Path(path) => serve_static(path.clone(), request).await,
-        Target::Port(port) => proxy_request(*port, request).await,
+    // Match route by path (longest prefix wins)
+    let path = request.uri().path();
+    let route = match registration.match_route(path) {
+        Some(r) => r,
+        None => {
+            return build_no_route_response(&host, path);
+        }
+    };
+
+    // Route to appropriate backend based on target type
+    match &route.target {
+        RouteTarget::StaticFiles(dir) => serve_static(dir.clone(), request).await,
+        RouteTarget::Proxy(target) => proxy_request(target, request).await,
     }
 }
 
@@ -102,15 +111,49 @@ fn build_not_registered_response(domain: &str) -> Response {
     <p>The domain <code>{domain}</code> is not registered with Roxy.</p>
     <p>To register this domain, run:</p>
     <div class="command">
-        roxy register {domain} --port 3000<br>
-        <small># or for static files:</small><br>
-        roxy register {domain} --path /path/to/static/files
+        roxy register {domain} --route "/=3000"<br>
+        <small># or with multiple routes:</small><br>
+        roxy register {domain} --route "/=3000" --route "/api=3001"
     </div>
     <p>Then restart the Roxy daemon:</p>
     <div class="command">roxy restart</div>
 </body>
 </html>"#,
         domain = domain
+    );
+
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(axum::body::Body::from(html))
+        .unwrap()
+}
+
+fn build_no_route_response(domain: &str, path: &str) -> Response {
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>No Route Found - Roxy</title>
+    <style>
+        body {{ font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 100px auto; padding: 20px; line-height: 1.6; }}
+        h1 {{ color: #e74c3c; margin-bottom: 24px; }}
+        code {{ background: #f4f4f4; padding: 2px 8px; border-radius: 4px; font-family: 'SF Mono', Menlo, monospace; }}
+        .command {{ background: #2d2d2d; color: #f8f8f2; padding: 16px; border-radius: 8px; margin: 16px 0; font-family: 'SF Mono', Menlo, monospace; font-size: 14px; }}
+        p {{ color: #444; }}
+    </style>
+</head>
+<body>
+    <h1>No Route Found</h1>
+    <p>No route matches path <code>{path}</code> on domain <code>{domain}</code>.</p>
+    <p>To add a route for this path, run:</p>
+    <div class="command">roxy route add {domain} {path} 3000</div>
+    <p>Then reload the Roxy daemon:</p>
+    <div class="command">roxy reload</div>
+</body>
+</html>"#,
+        domain = domain,
+        path = path
     );
 
     Response::builder()
