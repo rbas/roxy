@@ -20,7 +20,6 @@ pub enum CertError {
         source: std::io::Error,
     },
 
-    #[allow(dead_code)]
     #[error("Failed to read certificate from {path}: {source}")]
     ReadError {
         path: PathBuf,
@@ -32,10 +31,6 @@ pub enum CertError {
         path: PathBuf,
         source: std::io::Error,
     },
-
-    #[allow(dead_code)]
-    #[error("Certificate not found for domain: {0}")]
-    NotFound(String),
 
     #[error("Trust store operation failed: {0}")]
     TrustStoreError(String),

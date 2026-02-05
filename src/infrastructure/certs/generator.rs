@@ -18,7 +18,6 @@ pub struct Certificate {
 }
 
 /// Paths to certificate and key files
-#[allow(dead_code)]
 pub struct CertPaths {
     pub cert: PathBuf,
     pub key: PathBuf,
@@ -41,15 +40,10 @@ impl CertificateGenerator {
     }
 
     /// Create a CertificateGenerator with a custom base directory (useful for testing)
+    #[cfg(test)]
     pub fn with_base_dir(base_dir: PathBuf) -> Self {
         let certs_dir = base_dir.join("certs");
         Self { base_dir, certs_dir }
-    }
-
-    /// Returns the directory where certificates are stored
-    #[allow(dead_code)]
-    pub fn certs_dir(&self) -> &PathBuf {
-        &self.certs_dir
     }
 
     /// Generate a new certificate for the given domain, signed by the Root CA

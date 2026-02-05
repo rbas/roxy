@@ -127,15 +127,6 @@ impl RootCA {
         KeyPair::from_pem(&key_pem).map_err(|e| CertError::GenerationError(e.to_string()))
     }
 
-    /// Load the CA certificate PEM for signing
-    #[allow(dead_code)]
-    pub fn load_cert_pem(&self) -> Result<String, CertError> {
-        fs::read_to_string(self.cert_path()).map_err(|e| CertError::ReadError {
-            path: self.cert_path(),
-            source: e,
-        })
-    }
-
     /// Sign a certificate with this CA
     /// Returns the signed certificate PEM
     pub fn sign_certificate(
@@ -172,7 +163,6 @@ impl RootCA {
     }
 
     /// Delete the CA certificate and key (used by uninstall)
-    #[allow(dead_code)]
     pub fn delete(&self) -> Result<(), CertError> {
         let cert_path = self.cert_path();
         let key_path = self.key_path();

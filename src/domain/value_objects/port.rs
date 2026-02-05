@@ -23,7 +23,7 @@ impl Port {
         Ok(Self(port))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn value(&self) -> u16 {
         self.0
     }

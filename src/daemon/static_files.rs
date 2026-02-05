@@ -18,8 +18,3 @@ pub async fn serve_static(root: PathBuf, request: Request) -> Response {
     }
 }
 
-/// Create a 404 response for missing files
-#[allow(dead_code)]
-pub fn not_found() -> Response {
-    (StatusCode::NOT_FOUND, "404 Not Found").into_response()
-}
