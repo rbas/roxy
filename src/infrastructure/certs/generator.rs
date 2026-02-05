@@ -1,10 +1,12 @@
 use rcgen::{
-    CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P256_SHA256, SanType,
+    CertificateParams, DistinguishedName, DnType, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
+    SanType,
 };
 use std::fs;
 use std::path::PathBuf;
 use time::{Duration, OffsetDateTime};
 
+use super::ca::RootCA;
 use super::CertError;
 use crate::domain::DomainName;
 
@@ -42,11 +44,20 @@ impl CertificateGenerator {
         &self.certs_dir
     }
 
-    /// Generate a new certificate for the given domain
+    /// Generate a new certificate for the given domain, signed by the Root CA
     pub fn generate(&self, domain: &DomainName) -> Result<Certificate, CertError> {
+        let ca = RootCA::new();
+
+        // Ensure CA exists
+        if !ca.exists() {
+            return Err(CertError::GenerationError(
+                "Root CA not found. Run 'sudo roxy install' first.".to_string(),
+            ));
+        }
+
         let domain_str = domain.as_str();
 
-        // Generate ECDSA P-256 key pair (per FR-3.1.2)
+        // Generate ECDSA P-256 key pair for the domain (per FR-3.1.2)
         let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
             .map_err(|e| CertError::GenerationError(e.to_string()))?;
 
@@ -69,14 +80,18 @@ impl CertificateGenerator {
             CertError::GenerationError(format!("Invalid domain name for SAN: {}", e))
         })?)];
 
-        // Generate the certificate
-        let cert = params
-            .self_signed(&key_pair)
-            .map_err(|e| CertError::GenerationError(e.to_string()))?;
+        // Set key usage for server certificate
+        params.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyEncipherment,
+        ];
+
+        // Sign certificate with CA
+        let cert_pem = ca.sign_certificate(params, &key_pair)?;
 
         Ok(Certificate {
             domain: domain_str.to_string(),
-            cert_pem: cert.pem(),
+            cert_pem,
             key_pem: key_pair.serialize_pem(),
         })
     }
@@ -188,6 +203,14 @@ mod tests {
 
     #[test]
     fn test_certificate_generation() {
+        let ca = RootCA::new();
+
+        // Skip test if CA doesn't exist (requires sudo roxy install)
+        if !ca.exists() {
+            eprintln!("Skipping test: Root CA not found. Run 'sudo roxy install' first.");
+            return;
+        }
+
         let domain = DomainName::new("test.roxy").unwrap();
         let generator = CertificateGenerator::new();
 

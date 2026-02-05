@@ -19,6 +19,15 @@ pub trait TrustStore {
 
     /// Check if a certificate is trusted
     fn is_trusted(&self, domain: &DomainName) -> Result<bool, CertError>;
+
+    /// Add the Root CA to the system trust store
+    fn add_ca(&self, cert_path: &Path) -> Result<(), CertError>;
+
+    /// Remove the Root CA from the system trust store
+    fn remove_ca(&self) -> Result<(), CertError>;
+
+    /// Check if the Root CA is trusted
+    fn is_ca_trusted(&self) -> Result<bool, CertError>;
 }
 
 /// Get the trust store for the current platform

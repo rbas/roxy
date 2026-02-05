@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+pub mod ca;
 pub mod generator;
 pub mod service;
 pub mod trust_store;
