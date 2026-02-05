@@ -5,7 +5,6 @@ mod proxy_target;
 mod route;
 
 pub use domain_name::DomainName;
-pub use path_prefix::{PathPrefix, PathPrefixError};
-pub use port::Port;
-pub use proxy_target::{ProxyTarget, ProxyTargetError};
-pub use route::{Route, RouteError, RouteTarget, RouteTargetError};
+pub use path_prefix::PathPrefix;
+pub use proxy_target::ProxyTarget;
+pub use route::{Route, RouteTarget};
