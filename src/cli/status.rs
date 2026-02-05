@@ -30,8 +30,7 @@ pub fn execute() -> Result<()> {
             println!("  HTTP:  http://localhost:80");
             println!("  HTTPS: https://localhost:443");
             if !lan_ip.is_loopback() {
-                println!("\n  Access from Docker containers: use https://yourdomain.roxy");
-                println!("  Access from other devices: use http://{}", lan_ip);
+                println!("\n  Access from other devices: use http://{}", lan_ip);
             }
         }
         None => {
@@ -40,13 +39,6 @@ pub fn execute() -> Result<()> {
             println!("  Root CA: {}", if ca_installed { "installed" } else { "not installed" });
             println!("\nStart with: sudo roxy start");
         }
-    }
-
-    // Show CA mount info for Docker users
-    if ca_installed {
-        println!("\nDocker CA mount:");
-        println!("  -v {}:/usr/local/share/ca-certificates/roxy.crt",
-                 cert_service.ca_cert_path().display());
     }
 
     // Show registered domains

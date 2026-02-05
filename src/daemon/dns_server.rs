@@ -1,60 +1,28 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::Result;
-use simple_dns::rdata::{RData, A, AAAA};
-use simple_dns::{Name, Packet, PacketFlag, Question, ResourceRecord, CLASS, QTYPE, RCODE, TYPE};
+use simple_dns::rdata::{A, AAAA, RData};
+use simple_dns::{CLASS, Name, Packet, PacketFlag, QTYPE, Question, RCODE, ResourceRecord, TYPE};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use crate::infrastructure::logging::LogFile;
 
-/// Docker Desktop for Mac's host gateway IP
-const DOCKER_HOST_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 65, 254);
-
-/// Determines the appropriate response IP based on the source of the DNS query.
-/// This allows Docker containers to get the Docker host IP while regular
-/// host applications get the LAN IP.
+/// Resolves .roxy domains to the configured LAN IP.
 #[derive(Clone)]
 pub struct IpResolver {
     lan_ip: Ipv4Addr,
-    docker_host_ip: Ipv4Addr,
 }
 
 impl IpResolver {
     pub fn new(lan_ip: Ipv4Addr) -> Self {
-        Self {
-            lan_ip,
-            docker_host_ip: DOCKER_HOST_IP,
-        }
+        Self { lan_ip }
     }
 
-    /// Returns the appropriate IP(s) based on the source address of the query.
-    pub fn resolve_for_source(&self, source: IpAddr) -> Vec<Ipv4Addr> {
-        match source {
-            // Localhost queries - from host browser/apps
-            IpAddr::V4(ip) if ip.is_loopback() => vec![self.lan_ip],
-            IpAddr::V6(ip) if ip.is_loopback() => vec![self.lan_ip],
-
-            // Docker network queries (172.x.x.x is Docker's default bridge)
-            IpAddr::V4(ip) if Self::is_docker_network(ip) => vec![self.docker_host_ip],
-
-            // LAN queries - from other devices on the network
-            IpAddr::V4(ip) if ip.is_private() => vec![self.lan_ip],
-
-            // Unknown source - return both IPs as fallback
-            _ => vec![self.docker_host_ip, self.lan_ip],
-        }
-    }
-
-    /// Checks if an IP is from Docker's typical network ranges
-    fn is_docker_network(ip: Ipv4Addr) -> bool {
-        let octets = ip.octets();
-        // Docker default bridge: 172.17.0.0/16
-        // Docker custom networks: 172.18-31.0.0/16
-        // Docker for Mac VM network: 192.168.65.0/24
-        octets[0] == 172 && (17..=31).contains(&octets[1])
-            || (octets[0] == 192 && octets[1] == 168 && octets[2] == 65)
+    /// Returns the LAN IP for all queries.
+    pub fn resolve(&self) -> Ipv4Addr {
+        self.lan_ip
     }
 }
 
@@ -91,14 +59,14 @@ impl DnsServer {
         let _ = log.log(&format!("DNS server listening on {} (UDP/TCP)", ipv4_addr));
         let _ = log.log(&format!("DNS server listening on {} (UDP/TCP)", ipv6_addr));
         let _ = log.log(&format!(
-            "DNS using source-based IP resolution (LAN: {}, Docker: {})",
-            self.ip_resolver.lan_ip, self.ip_resolver.docker_host_ip
+            "DNS resolving all .roxy domains to {}",
+            self.ip_resolver.lan_ip
         ));
         println!("DNS server listening on {} (UDP/TCP)", ipv4_addr);
         println!("DNS server listening on {} (UDP/TCP)", ipv6_addr);
         println!(
-            "DNS using source-based IP resolution (LAN: {}, Docker: {})",
-            self.ip_resolver.lan_ip, self.ip_resolver.docker_host_ip
+            "DNS resolving all .roxy domains to {}",
+            self.ip_resolver.lan_ip
         );
 
         let ttl = self.ttl;
@@ -115,28 +83,28 @@ impl DnsServer {
 
 async fn serve_udp(socket: UdpSocket, ttl: u32, resolver: Arc<IpResolver>) -> Result<()> {
     let mut buf = [0u8; 512]; // Standard DNS UDP size
+    let response_ip = resolver.resolve();
 
     loop {
         let (len, addr) = socket.recv_from(&mut buf).await?;
-        let response_ips = resolver.resolve_for_source(addr.ip());
-        let response = handle_query(&buf[..len], ttl, &response_ips);
+        let response = handle_query(&buf[..len], ttl, response_ip);
         let _ = socket.send_to(&response, addr).await;
     }
 }
 
 async fn serve_tcp(listener: TcpListener, ttl: u32, resolver: Arc<IpResolver>) -> Result<()> {
+    let response_ip = resolver.resolve();
+
     loop {
-        let (stream, addr) = listener.accept().await?;
-        let resolver = resolver.clone();
-        tokio::spawn(handle_tcp_connection(stream, addr.ip(), ttl, resolver));
+        let (stream, _addr) = listener.accept().await?;
+        tokio::spawn(handle_tcp_connection(stream, ttl, response_ip));
     }
 }
 
 async fn handle_tcp_connection(
     mut stream: TcpStream,
-    source_ip: IpAddr,
     ttl: u32,
-    resolver: Arc<IpResolver>,
+    response_ip: Ipv4Addr,
 ) -> Result<()> {
     // TCP DNS uses 2-byte length prefix
     let mut len_buf = [0u8; 2];
@@ -146,8 +114,7 @@ async fn handle_tcp_connection(
     let mut query_buf = vec![0u8; len];
     stream.read_exact(&mut query_buf).await?;
 
-    let response_ips = resolver.resolve_for_source(source_ip);
-    let response = handle_query(&query_buf, ttl, &response_ips);
+    let response = handle_query(&query_buf, ttl, response_ip);
 
     // Send response with length prefix
     let resp_len = (response.len() as u16).to_be_bytes();
@@ -157,7 +124,7 @@ async fn handle_tcp_connection(
     Ok(())
 }
 
-fn handle_query(query: &[u8], ttl: u32, response_ips: &[Ipv4Addr]) -> Vec<u8> {
+fn handle_query(query: &[u8], ttl: u32, response_ip: Ipv4Addr) -> Vec<u8> {
     // Parse incoming query
     let packet = match Packet::parse(query) {
         Ok(p) => p,
@@ -178,9 +145,9 @@ fn handle_query(query: &[u8], ttl: u32, response_ips: &[Ipv4Addr]) -> Vec<u8> {
 
     // Build response based on query type
     match question.qtype {
-        QTYPE::TYPE(TYPE::A) => build_a_response(&packet, question, ttl, response_ips),
+        QTYPE::TYPE(TYPE::A) => build_a_response(&packet, question, ttl, response_ip),
         QTYPE::TYPE(TYPE::AAAA) => build_aaaa_response(&packet, question, ttl),
-        QTYPE::ANY => build_any_response(&packet, question, ttl, response_ips),
+        QTYPE::ANY => build_any_response(&packet, question, ttl, response_ip),
         _ => build_empty_response(&packet),
     }
 }
@@ -223,7 +190,7 @@ fn build_empty_response(packet: &Packet) -> Vec<u8> {
     response.build_bytes_vec().unwrap_or_default()
 }
 
-fn build_a_response(packet: &Packet, question: &Question, ttl: u32, ips: &[Ipv4Addr]) -> Vec<u8> {
+fn build_a_response(packet: &Packet, question: &Question, ttl: u32, ip: Ipv4Addr) -> Vec<u8> {
     let mut response = Packet::new_reply(packet.id());
     response.set_flags(
         PacketFlag::RESPONSE | PacketFlag::AUTHORITATIVE_ANSWER | PacketFlag::RECURSION_DESIRED,
@@ -233,14 +200,12 @@ fn build_a_response(packet: &Packet, question: &Question, ttl: u32, ips: &[Ipv4A
     // Add the question
     response.questions.push(question.clone());
 
-    // Add A records for all configured IPs
+    // Add A record
     let name_str = question.qname.to_string();
-    for ip in ips {
-        let name = Name::new_unchecked(&name_str);
-        let a_record = A::from(*ip);
-        let record = ResourceRecord::new(name, CLASS::IN, ttl, RData::A(a_record));
-        response.answers.push(record);
-    }
+    let name = Name::new_unchecked(&name_str);
+    let a_record = A::from(ip);
+    let record = ResourceRecord::new(name, CLASS::IN, ttl, RData::A(a_record));
+    response.answers.push(record);
 
     response.build_bytes_vec().unwrap_or_default()
 }
@@ -265,7 +230,7 @@ fn build_aaaa_response(packet: &Packet, question: &Question, ttl: u32) -> Vec<u8
     response.build_bytes_vec().unwrap_or_default()
 }
 
-fn build_any_response(packet: &Packet, question: &Question, ttl: u32, ips: &[Ipv4Addr]) -> Vec<u8> {
+fn build_any_response(packet: &Packet, question: &Question, ttl: u32, ip: Ipv4Addr) -> Vec<u8> {
     let mut response = Packet::new_reply(packet.id());
     response.set_flags(
         PacketFlag::RESPONSE | PacketFlag::AUTHORITATIVE_ANSWER | PacketFlag::RECURSION_DESIRED,
@@ -275,15 +240,16 @@ fn build_any_response(packet: &Packet, question: &Question, ttl: u32, ips: &[Ipv
     // Add the question
     response.questions.push(question.clone());
 
-    // Add A records for all configured IPs
+    // Add A record
     let name_str = question.qname.to_string();
-    for ip in ips {
-        let name_a = Name::new_unchecked(&name_str);
-        let a_record = A::from(*ip);
-        response
-            .answers
-            .push(ResourceRecord::new(name_a, CLASS::IN, ttl, RData::A(a_record)));
-    }
+    let name_a = Name::new_unchecked(&name_str);
+    let a_record = A::from(ip);
+    response.answers.push(ResourceRecord::new(
+        name_a,
+        CLASS::IN,
+        ttl,
+        RData::A(a_record),
+    ));
 
     // Add AAAA record
     let name_aaaa = Name::new_unchecked(&name_str);
@@ -302,66 +268,16 @@ fn build_any_response(packet: &Packet, question: &Question, ttl: u32, ips: &[Ipv
 mod tests {
     use super::*;
 
-    fn test_ips() -> Vec<Ipv4Addr> {
-        vec![Ipv4Addr::new(192, 168, 1, 100)]
-    }
+    const TEST_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 100);
 
     fn test_resolver() -> IpResolver {
-        IpResolver::new(Ipv4Addr::new(192, 168, 1, 100))
+        IpResolver::new(TEST_IP)
     }
 
     #[test]
-    fn test_ip_resolver_localhost_returns_lan_ip() {
+    fn test_ip_resolver_returns_configured_ip() {
         let resolver = test_resolver();
-
-        // IPv4 localhost
-        let ips = resolver.resolve_for_source(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
-        assert_eq!(ips, vec![Ipv4Addr::new(192, 168, 1, 100)]);
-
-        // IPv6 localhost
-        let ips = resolver.resolve_for_source(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)));
-        assert_eq!(ips, vec![Ipv4Addr::new(192, 168, 1, 100)]);
-    }
-
-    #[test]
-    fn test_ip_resolver_docker_network_returns_docker_host_ip() {
-        let resolver = test_resolver();
-
-        // Docker default bridge (172.17.x.x)
-        let ips = resolver.resolve_for_source(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 2)));
-        assert_eq!(ips, vec![DOCKER_HOST_IP]);
-
-        // Docker custom network (172.18.x.x)
-        let ips = resolver.resolve_for_source(IpAddr::V4(Ipv4Addr::new(172, 18, 0, 5)));
-        assert_eq!(ips, vec![DOCKER_HOST_IP]);
-
-        // Docker for Mac VM network (192.168.65.x)
-        let ips = resolver.resolve_for_source(IpAddr::V4(Ipv4Addr::new(192, 168, 65, 2)));
-        assert_eq!(ips, vec![DOCKER_HOST_IP]);
-    }
-
-    #[test]
-    fn test_ip_resolver_lan_returns_lan_ip() {
-        let resolver = test_resolver();
-
-        // Another device on LAN
-        let ips = resolver.resolve_for_source(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)));
-        assert_eq!(ips, vec![Ipv4Addr::new(192, 168, 1, 100)]);
-
-        // Different LAN subnet
-        let ips = resolver.resolve_for_source(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)));
-        assert_eq!(ips, vec![Ipv4Addr::new(192, 168, 1, 100)]);
-    }
-
-    #[test]
-    fn test_ip_resolver_unknown_returns_both() {
-        let resolver = test_resolver();
-
-        // Public IP (shouldn't happen in practice, but test fallback)
-        let ips = resolver.resolve_for_source(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
-        assert_eq!(ips.len(), 2);
-        assert!(ips.contains(&DOCKER_HOST_IP));
-        assert!(ips.contains(&Ipv4Addr::new(192, 168, 1, 100)));
+        assert_eq!(resolver.resolve(), TEST_IP);
     }
 
     #[test]
@@ -373,7 +289,7 @@ mod tests {
         packet.questions.push(question);
 
         let query = packet.build_bytes_vec().unwrap();
-        let response = handle_query(&query, 1, &test_ips());
+        let response = handle_query(&query, 1, TEST_IP);
 
         let parsed = Packet::parse(&response).unwrap();
         assert_eq!(parsed.rcode(), RCODE::NoError);
@@ -389,7 +305,7 @@ mod tests {
         packet.questions.push(question);
 
         let query = packet.build_bytes_vec().unwrap();
-        let response = handle_query(&query, 1, &test_ips());
+        let response = handle_query(&query, 1, TEST_IP);
 
         let parsed = Packet::parse(&response).unwrap();
         assert_eq!(parsed.rcode(), RCODE::Refused);
@@ -404,7 +320,7 @@ mod tests {
         packet.questions.push(question);
 
         let query = packet.build_bytes_vec().unwrap();
-        let response = handle_query(&query, 1, &test_ips());
+        let response = handle_query(&query, 1, TEST_IP);
 
         let parsed = Packet::parse(&response).unwrap();
         assert_eq!(parsed.rcode(), RCODE::NoError);
@@ -420,7 +336,7 @@ mod tests {
         packet.questions.push(question);
 
         let query = packet.build_bytes_vec().unwrap();
-        let response = handle_query(&query, 1, &test_ips());
+        let response = handle_query(&query, 1, TEST_IP);
 
         let parsed = Packet::parse(&response).unwrap();
         assert_eq!(parsed.rcode(), RCODE::NoError);
@@ -428,33 +344,25 @@ mod tests {
     }
 
     #[test]
-    fn test_a_response_uses_configured_ips() {
+    fn test_a_response_uses_configured_ip() {
         let mut packet = Packet::new_query(1111);
         let name = Name::new_unchecked("test.roxy");
         let question = Question::new(name, TYPE::A.into(), CLASS::IN.into(), false);
         packet.questions.push(question);
 
         let query = packet.build_bytes_vec().unwrap();
-        let custom_ips = vec![
-            Ipv4Addr::new(10, 0, 0, 50),
-            Ipv4Addr::new(192, 168, 65, 254),
-        ];
-        let response = handle_query(&query, 1, &custom_ips);
+        let custom_ip = Ipv4Addr::new(10, 0, 0, 50);
+        let response = handle_query(&query, 1, custom_ip);
 
         let parsed = Packet::parse(&response).unwrap();
         assert_eq!(parsed.rcode(), RCODE::NoError);
-        // Should have 2 A records - one for each IP
-        assert_eq!(parsed.answers.len(), 2);
+        assert_eq!(parsed.answers.len(), 1);
 
-        // Verify both IPs are in the response
-        let mut found_ips: Vec<Ipv4Addr> = Vec::new();
-        for answer in &parsed.answers {
-            if let RData::A(a_record) = &answer.rdata {
-                let expected = A::from(custom_ips[found_ips.len()]);
-                assert_eq!(*a_record, expected);
-                found_ips.push(custom_ips[found_ips.len()]);
-            }
+        // Verify the IP in the response
+        if let RData::A(a_record) = &parsed.answers[0].rdata {
+            assert_eq!(*a_record, A::from(custom_ip));
+        } else {
+            panic!("Expected A record");
         }
-        assert_eq!(found_ips.len(), 2);
     }
 }

@@ -50,7 +50,7 @@ pub fn execute(foreground: bool) -> Result<()> {
         );
         println!("LAN IP: {}", lan_ip);
         if !lan_ip.is_loopback() {
-            println!("\nAccess from Docker/other devices: https://yourdomain.roxy");
+            println!("\nAccess from other devices: https://yourdomain.roxy");
         }
         println!("\nUse 'roxy status' to check status");
         println!("Use 'roxy stop' to stop the daemon");

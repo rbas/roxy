@@ -43,7 +43,7 @@ impl CertificateService {
         trust_store.is_ca_trusted()
     }
 
-    /// Get the path to the CA certificate (for Docker mounting)
+    /// Get the path to the CA certificate
     pub fn ca_cert_path(&self) -> std::path::PathBuf {
         self.ca.cert_path()
     }

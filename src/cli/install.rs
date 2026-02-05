@@ -17,7 +17,6 @@ pub fn execute() -> Result<()> {
     println!("  Using IP address: {}", lan_ip);
     if lan_ip.is_loopback() {
         println!("  Warning: No network detected, using localhost.");
-        println!("  Docker container access will not work.");
     }
 
     // Step 1: Initialize Root CA
@@ -58,15 +57,6 @@ pub fn execute() -> Result<()> {
 
     println!("Roxy installation complete!");
     println!();
-
-    // Show CA path for Docker users
-    if cert_service.is_ca_installed().unwrap_or(false) {
-        println!("For Docker container access, mount the CA certificate:");
-        println!("  docker run -v {}:/usr/local/share/ca-certificates/roxy.crt ...",
-                 cert_service.ca_cert_path().display());
-        println!();
-    }
-
     println!("Register domains with: roxy register <domain> --port <port>");
 
     Ok(())
