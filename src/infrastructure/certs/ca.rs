@@ -1,6 +1,6 @@
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
-    PKCS_ECDSA_P256_SHA256,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
+    KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -149,14 +149,12 @@ impl RootCA {
         ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
 
-        // Generate CA cert from params
-        let ca_cert = ca_params
-            .self_signed(&ca_key_pair)
-            .map_err(|e| CertError::GenerationError(e.to_string()))?;
+        // Create issuer from CA params and key pair
+        let issuer = Issuer::from_params(&ca_params, &ca_key_pair);
 
         // Sign the domain certificate
         let cert = params
-            .signed_by(key_pair, &ca_cert, &ca_key_pair)
+            .signed_by(key_pair, &issuer)
             .map_err(|e| CertError::GenerationError(e.to_string()))?;
 
         Ok(cert.pem())
