@@ -61,20 +61,6 @@ impl RouteTarget {
         // Otherwise it's a proxy target
         Ok(Self::Proxy(ProxyTarget::parse(s)?))
     }
-
-    pub fn as_proxy(&self) -> Option<&ProxyTarget> {
-        match self {
-            RouteTarget::Proxy(p) => Some(p),
-            RouteTarget::StaticFiles(_) => None,
-        }
-    }
-
-    pub fn as_static_files(&self) -> Option<&PathBuf> {
-        match self {
-            RouteTarget::StaticFiles(p) => Some(p),
-            RouteTarget::Proxy(_) => None,
-        }
-    }
 }
 
 impl fmt::Display for RouteTarget {
@@ -172,20 +158,22 @@ mod tests {
     #[test]
     fn test_parse_proxy_route() {
         let route = Route::parse("/api=3001").unwrap();
-        assert_eq!(route.path.as_str(), "/api");
-        assert!(route.target.as_proxy().is_some());
+        assert_eq!(route.path.to_string(), "/api");
+        assert!(matches!(route.target, RouteTarget::Proxy(_)));
     }
 
     #[test]
     fn test_parse_root_route() {
         let route = Route::parse("/=3000").unwrap();
-        assert_eq!(route.path.as_str(), "/");
+        assert_eq!(route.path.to_string(), "/");
     }
 
     #[test]
     fn test_parse_with_host() {
         let route = Route::parse("/api=192.168.1.50:3001").unwrap();
-        let proxy = route.target.as_proxy().unwrap();
+        let RouteTarget::Proxy(proxy) = &route.target else {
+            panic!("expected proxy target");
+        };
         assert_eq!(proxy.host(), "192.168.1.50");
         assert_eq!(proxy.port().value(), 3001);
     }

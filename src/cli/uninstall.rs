@@ -34,12 +34,13 @@ pub fn execute(force: bool) -> Result<()> {
     let config_store = ConfigStore::new();
     let domains = config_store.list_domains().unwrap_or_default();
 
+    let cert_service = CertificateService::new();
+
     if !domains.is_empty() {
         println!(
-            "  Removing {} domain certificate(s) from trust store...",
+            "  Removing {} domain certificate(s)...",
             domains.len()
         );
-        let cert_service = CertificateService::new();
 
         for registration in &domains {
             match cert_service.remove(&registration.domain) {
@@ -47,6 +48,13 @@ pub fn execute(force: bool) -> Result<()> {
                 Err(e) => println!("    - {} failed: {}", registration.domain, e),
             }
         }
+    }
+
+    // Remove Root CA from system trust store
+    println!("  Removing Root CA from system trust store...");
+    match cert_service.remove_ca() {
+        Ok(_) => println!("  Root CA removed."),
+        Err(e) => println!("  Failed to remove Root CA: {}", e),
     }
 
     // Step 3: Remove DNS configuration

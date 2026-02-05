@@ -43,11 +43,6 @@ impl CertificateService {
         trust_store.is_ca_trusted()
     }
 
-    /// Get the path to the CA certificate
-    pub fn ca_cert_path(&self) -> std::path::PathBuf {
-        self.ca.cert_path()
-    }
-
     /// Generate a certificate for a domain (signed by the Root CA)
     /// The certificate is automatically trusted because the CA is trusted
     pub fn create_and_install(&self, domain: &DomainName) -> Result<(), CertError> {
