@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -6,11 +6,12 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 use super::dns_server::DnsServer;
-use super::router::{AppState, create_http_redirect_router, create_router};
+use super::router::{AppState, create_router};
 use super::tls::create_tls_acceptor;
 use crate::domain::DomainName;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::logging::LogFile;
+use crate::infrastructure::network::get_lan_ip;
 
 pub struct Server {
     state: Arc<AppState>,
@@ -18,6 +19,7 @@ pub struct Server {
     http_port: u16,
     https_port: u16,
     dns_port: u16,
+    lan_ip: Ipv4Addr,
 }
 
 impl Server {
@@ -40,12 +42,16 @@ impl Server {
 
         let tls_acceptor = create_tls_acceptor(&https_domains)?;
 
+        // Get LAN IP for DNS responses (DNS server handles source-based resolution)
+        let lan_ip = get_lan_ip();
+
         Ok(Self {
             state,
             tls_acceptor,
             http_port: config.daemon.http_port,
             https_port: config.daemon.https_port,
             dns_port: config.daemon.dns_port,
+            lan_ip,
         })
     }
 
@@ -53,8 +59,18 @@ impl Server {
         let log = LogFile::new();
         let _ = log.log("Daemon starting...");
 
-        // Start DNS server
-        let dns_server = DnsServer::new(self.dns_port);
+        // Log LAN IP for debugging
+        let _ = log.log(&format!(
+            "DNS will use source-based resolution (LAN IP: {})",
+            self.lan_ip
+        ));
+        println!(
+            "DNS will use source-based resolution (LAN IP: {})",
+            self.lan_ip
+        );
+
+        // Start DNS server with LAN IP (handles source-based IP resolution internally)
+        let dns_server = DnsServer::new(self.dns_port, self.lan_ip);
         let dns_handle = tokio::spawn(async move {
             if let Err(e) = dns_server.run().await {
                 eprintln!("DNS server error: {}", e);
@@ -64,12 +80,8 @@ impl Server {
         let http_addr = SocketAddr::from(([0, 0, 0, 0], self.http_port));
         let https_addr = SocketAddr::from(([0, 0, 0, 0], self.https_port));
 
-        // Start HTTP server (redirects to HTTPS if TLS available, otherwise serves directly)
-        let http_router = if self.tls_acceptor.is_some() {
-            create_http_redirect_router()
-        } else {
-            create_router(self.state.clone())
-        };
+        // Start HTTP server - always serve content (no redirect to HTTPS)
+        let http_router = create_router(self.state.clone());
 
         let http_listener = TcpListener::bind(http_addr).await.context(format!(
             "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",

@@ -5,7 +5,7 @@ use axum::{
     Router,
     extract::{Request, State},
     http::{StatusCode, header},
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
     routing::any,
 };
 
@@ -80,27 +80,6 @@ async fn handle_request(State(state): State<Arc<AppState>>, request: Request) ->
         Target::Path(path) => serve_static(path.clone(), request).await,
         Target::Port(port) => proxy_request(*port, request).await,
     }
-}
-
-/// Create HTTP router that redirects to HTTPS
-pub fn create_http_redirect_router() -> Router {
-    Router::new().fallback(redirect_to_https)
-}
-
-async fn redirect_to_https(request: Request) -> impl IntoResponse {
-    let host = get_host(&request).unwrap_or_else(|| "localhost".to_string());
-    let path = request.uri().path();
-    let query = request
-        .uri()
-        .query()
-        .map(|q| format!("?{}", q))
-        .unwrap_or_default();
-
-    // Strip port from host if present
-    let domain = host.split(':').next().unwrap_or(&host);
-    let https_url = format!("https://{}{}{}", domain, path, query);
-
-    Redirect::permanent(&https_url)
 }
 
 fn build_not_registered_response(domain: &str) -> Response {

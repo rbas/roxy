@@ -4,6 +4,7 @@ use std::process::{Command, Stdio};
 
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::logging::LogFile;
+use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::pid::PidFile;
 
 pub fn execute(foreground: bool) -> Result<()> {
@@ -41,11 +42,16 @@ pub fn execute(foreground: bool) -> Result<()> {
             .stderr(Stdio::null())
             .spawn()?;
 
+        let lan_ip = get_lan_ip();
         println!("Roxy daemon started (PID: {})", child.id());
         println!(
-            "Listening on http://localhost:{} and https://localhost:{}",
+            "Listening on 0.0.0.0:{} (HTTP) and 0.0.0.0:{} (HTTPS)",
             config.daemon.http_port, config.daemon.https_port
         );
+        println!("LAN IP: {}", lan_ip);
+        if !lan_ip.is_loopback() {
+            println!("\nAccess from Docker/other devices: https://yourdomain.roxy");
+        }
         println!("\nUse 'roxy status' to check status");
         println!("Use 'roxy stop' to stop the daemon");
 

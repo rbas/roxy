@@ -1,7 +1,9 @@
 use anyhow::Result;
 
+use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::dns::{DnsService, get_dns_service};
+use crate::infrastructure::network::get_lan_ip;
 
 pub fn execute() -> Result<()> {
     println!("Setting up Roxy...\n");
@@ -10,9 +12,37 @@ pub fn execute() -> Result<()> {
     let config = config_store.load()?;
     let dns_port = config.daemon.dns_port;
 
-    let dns = get_dns_service()?;
+    // Detect LAN IP
+    let lan_ip = get_lan_ip();
+    println!("  Using IP address: {}", lan_ip);
+    if lan_ip.is_loopback() {
+        println!("  Warning: No network detected, using localhost.");
+        println!("  Docker container access will not work.");
+    }
 
-    // Step 1: Check if already configured
+    // Step 1: Initialize Root CA
+    let cert_service = CertificateService::new();
+    match cert_service.is_ca_installed() {
+        Ok(true) => {
+            println!("  Root CA already installed, skipping...");
+        }
+        _ => {
+            println!("  Creating Root CA for SSL certificates...");
+            match cert_service.init_ca() {
+                Ok(()) => {
+                    println!("  Root CA created and installed in system trust store.");
+                }
+                Err(e) => {
+                    eprintln!("  Warning: Failed to create Root CA: {}", e);
+                    eprintln!("  HTTPS certificates will not work.");
+                    eprintln!("  Run 'sudo roxy install' to enable HTTPS.");
+                }
+            }
+        }
+    }
+
+    // Step 2: Configure DNS
+    let dns = get_dns_service()?;
     if dns.is_configured() {
         println!("  DNS already configured, skipping...");
     } else {
@@ -21,13 +51,23 @@ pub fn execute() -> Result<()> {
         println!("  DNS configured successfully.");
     }
 
-    // Step 2: Validate DNS
+    // Step 3: Validate DNS
     println!("  Validating DNS configuration...");
     dns.validate()?;
     println!("  DNS validation passed.\n");
 
     println!("Roxy installation complete!");
-    println!("You can now register domains with: roxy register <domain> --port <port>");
+    println!();
+
+    // Show CA path for Docker users
+    if cert_service.is_ca_installed().unwrap_or(false) {
+        println!("For Docker container access, mount the CA certificate:");
+        println!("  docker run -v {}:/usr/local/share/ca-certificates/roxy.crt ...",
+                 cert_service.ca_cert_path().display());
+        println!();
+    }
+
+    println!("Register domains with: roxy register <domain> --port <port>");
 
     Ok(())
 }
