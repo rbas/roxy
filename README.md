@@ -132,11 +132,11 @@ For configuration details, logging options, and file locations see the
 
 ## Roadmap
 
-- [] Linux support
-- [] Docker private network DNS — resolve `.roxy` domains
+- [ ] Linux support
+- [ ] Docker private network DNS — resolve `.roxy` domains
   inside containers without manual `extra_hosts`
-- [] Wildcard subdomains (e.g., `*.myapp.roxy`)
-- [] Auto-start on boot via launchd
+- [ ] Wildcard subdomains (e.g., `*.myapp.roxy`)
+- [ ] Auto-start on boot via launchd
 
 ## License
 
