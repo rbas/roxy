@@ -25,22 +25,24 @@ open https://myapp.roxy
 
 ## Commands Reference
 
-| Command                      | Description                |
-| ---------------------------- | -------------------------- |
-| `roxy install`               | Initial setup              |
-| `roxy uninstall [--force]`   | Full cleanup               |
-| `roxy register <domain> ...` | Register domain            |
-| `roxy unregister <domain>`   | Remove domain              |
-| `roxy list`                  | Show all domains           |
-| `roxy route add ...`         | Add route to domain        |
-| `roxy route remove ...`      | Remove route from domain   |
-| `roxy route list <domain>`   | List routes for domain     |
-| `roxy start [--foreground]`  | Start daemon               |
-| `roxy stop`                  | Stop daemon                |
-| `roxy restart`               | Restart daemon             |
-| `roxy reload`                | Reload configuration       |
-| `roxy status`                | Show daemon status         |
-| `roxy logs [-n N] [-f]`      | View or follow daemon logs |
+| Command                            | Description                |
+| ---------------------------------- | -------------------------- |
+| `sudo roxy install`                | Initial setup              |
+| `sudo roxy uninstall [--force]`    | Full cleanup               |
+| `sudo roxy register <domain> ...`  | Register domain            |
+| `roxy unregister <domain>`         | Remove domain              |
+| `roxy list`                        | Show all domains           |
+| `sudo roxy route add ...`          | Add route to domain        |
+| `roxy route remove ...`            | Remove route from domain   |
+| `roxy route list <domain>`         | List routes for domain     |
+| `sudo roxy start [--foreground]`   | Start daemon               |
+| `sudo roxy stop`                   | Stop daemon                |
+| `sudo roxy restart`                | Restart daemon             |
+| `sudo roxy reload`                 | Reload configuration       |
+| `roxy status`                      | Show daemon status         |
+| `roxy logs [-n N] [-f]`            | View or follow daemon logs |
+
+**Note:** Commands that modify system configuration (CA certs, DNS) or control the daemon (runs on ports 80/443) require `sudo`.
 
 ## Route Targets
 
@@ -230,16 +232,19 @@ needs to be restarted to pick up newly registered domains.
 ### "Connection Refused" or "This site can't be reached"
 
 Check if the daemon is running:
+
 ```bash
 roxy status
 ```
 
 If it's not running, start it:
+
 ```bash
 sudo roxy start
 ```
 
 Verify DNS is working:
+
 ```bash
 dig myapp.roxy
 # Should show: myapp.roxy. 0 IN A 127.0.0.1

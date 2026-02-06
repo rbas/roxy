@@ -2,17 +2,35 @@
 
 ![Roxy](assets/roxy-logo-small.png)
 
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
 **Stop juggling localhost ports.** Get real domains and trusted HTTPS for every
-local project — with full visibility into all traffic, including WebSockets.
+local project — **with zero configuration files**.
 
-No YAML files. No containers. Just a single binary.
+Full visibility into all traffic, including WebSockets. No YAML. No containers.
+Just a single binary.
 
-```
-# Without Roxy                          # With Roxy
-http://localhost:3000   ← which app?    https://myapp.roxy        ← obvious
-http://localhost:3001   ← is this the   https://myapp.roxy/api    ← frontend + API
-http://localhost:8080   ← port conflict https://other.roxy        ← no conflicts
-```
+**The Problem:**
+
+- Which localhost port was my frontend again? 3000? 8080?
+- Browser screaming about invalid certificates every time you test HTTPS
+- Can't test OAuth callbacks locally (they require HTTPS)
+- Can't share your local work with your phone or teammate's laptop
+- Running 5 microservices = memorizing 5 ports
+
+**Without Roxy:**
+
+- `http://localhost:3000`   ← frontend? backend?
+- `http://localhost:3001`   ← which service?
+- `http://localhost:8080`   ← another project
+
+**With Roxy:**
+
+- `https://myapp.roxy`      ← frontend (port 3000)
+- `https://myapp.roxy/api`  ← backend (port 3001)
+- `https://other.roxy`      ← different project (port 8080)
+
+One domain, multiple services. Path-based routing with trusted HTTPS.
 
 ---
 
@@ -34,6 +52,19 @@ sudo roxy start
 
 Open `https://myapp.roxy` in your browser. That's it. Trusted HTTPS, no
 certificate warnings, path-based routing — all working.
+
+## See It In Action
+
+![DEMO](assets/roxy-demo.gif)
+
+## Perfect For
+
+- 🚀 **Full-stack developers** running frontend + backend + database locally
+- 📱 **Mobile app developers** testing APIs that require HTTPS
+- 🔗 **OAuth/webhook development** that requires real HTTPS callbacks
+- 👥 **Teams** who need to share work across devices on the same network
+- 🔧 **Microservices developers** juggling multiple local services
+- 🎨 **Anyone tired of memorizing port numbers**
 
 ### Multiple Projects, Zero Conflicts
 
@@ -58,6 +89,23 @@ fights. No config files to edit.
 - **LAN access** — services accessible from other devices on your network
 - **Built-in DNS server** — no dnsmasq or external DNS tools needed
 
+## Real-World Example
+
+Testing Stripe webhooks locally? They require HTTPS. Here's how:
+
+```bash
+# Register your e-commerce app
+roxy register shopify-clone.roxy \
+  --route "/=3000" \
+  --route "/api=3001"
+
+# Now point Stripe webhooks to: https://shopify-clone.roxy/api/webhooks
+# No ngrok. No tunnels. Just works.
+```
+
+Works with **any stack**: Next.js, Rails, Django, Express, Flask, Go, Rust,
+PHP... anything that speaks HTTP on any port.
+
 ## See Your Traffic
 
 Roxy logs all traffic flowing through it — HTTP requests, WebSocket connections,
@@ -67,6 +115,7 @@ and DNS queries. No more guessing what hit your backend.
 # Follow traffic in real-time
 roxy logs -f
 ```
+
 ```
 INFO Request completed method=GET host=myapp.roxy path=/ status=200
 INFO Request completed method=POST host=myapp.roxy path=/api/users status=201
@@ -80,6 +129,7 @@ Turn on verbose mode for full routing details:
 ```bash
 sudo roxy start --verbose
 ```
+
 ```
 DEBUG Routing request method=GET host=myapp.roxy path=/api/users route=/api
 DEBUG Proxying HTTP request target=127.0.0.1:3001
@@ -116,7 +166,7 @@ sudo roxy restart
 roxy status
 
 # Reload config without restarting
-roxy reload
+sudo roxy reload
 
 # View logs
 roxy logs
@@ -126,36 +176,35 @@ roxy logs -n 100      # Last 100 lines
 
 ## How It Works
 
-1. **`roxy install`** creates a local Root CA and adds it to your macOS
-   Keychain. It also configures DNS so all `.roxy` domains resolve to
-   `127.0.0.1`. Your browser trusts certificates signed by this CA — no
-   warnings, no exceptions to click through.
+**Three steps, then forget about it:**
 
-2. **`roxy register`** generates a trusted SSL certificate for the domain and
-   saves the routing configuration. Certificates are signed by the Root CA, so
-   they're trusted immediately.
+1. **`roxy install`** → Creates trusted Root CA + configures DNS for `.roxy` domains
+2. **`roxy register`** → Generates SSL cert + saves routing config
+3. **`roxy start`** → Runs proxy on `:80`/`:443`, routes traffic to your services
 
-3. **`roxy start`** launches a daemon on ports 80 and 443. It routes requests
-   based on the `Host` header and path prefix, forwarding them to the right
-   local service. WebSocket connections are fully supported and tracked.
+Your browser trusts the certificates (no warnings). WebSockets are fully supported.
 
-Roxy only touches `~/.roxy/` (config, certs, logs) and `/etc/resolver/roxy`
-(DNS). Run `roxy uninstall` to remove everything cleanly.
+**Clean and contained:** Everything lives in `~/.roxy/` (config, certs, logs) and
+`/etc/resolver/roxy` (DNS). Run `roxy uninstall` to remove everything cleanly.
 
 For configuration details, logging options, and file locations see the
 [full documentation](docs/README.md).
 
 ## How Is This Different?
 
-**Unlike nginx/traefik** — there's nothing to configure. No YAML, no
-`sites-enabled`, no config syntax to get wrong.
+**Unlike nginx/traefik** — Zero configuration files. No YAML, no `sites-enabled`,
+no nginx.conf, no config syntax to learn or get wrong. Just one command to register
+a domain.
 
-**Unlike Laravel Valet** — no dnsmasq, no nginx, no PHP runtime. Roxy has its
+**Unlike Laravel Valet** — No dnsmasq, no nginx, no PHP runtime. Roxy has its
 own built-in DNS server and reverse proxy in a single binary. Works with any
-stack on any port.
+stack on any port, not just PHP.
 
-**Unlike `/etc/hosts` hacks** — you get real HTTPS with trusted certificates,
-path-based routing, and WebSocket support.
+**Unlike `/etc/hosts` hacks** — Real HTTPS with trusted certificates (not
+self-signed warnings), path-based routing, WebSocket support, and traffic logging.
+
+**Unlike ngrok/tunnels** — Everything stays local. No third-party services, no
+bandwidth limits, no latency. Your traffic never leaves your machine.
 
 ## Requirements
 
@@ -163,14 +212,41 @@ path-based routing, and WebSocket support.
 - **Rust** (for building from source)
 - **sudo** for install/start (needs ports 80/443 and DNS configuration)
 
-## Roadmap
+## What's Next
 
-- [ ] Linux support
-- [ ] Docker private network DNS — resolve `.roxy` domains
-  inside containers without manual `extra_hosts`
-- [ ] Wildcard subdomains (e.g., `*.myapp.roxy`)
-- [ ] Auto-start on boot via launchd
-- [ ] Hot reload — pick up config changes without restarting the daemon
+Roxy is ready for daily development use on macOS. Future plans:
+
+- [ ] **Linux support** — extend to Linux development environments
+- [ ] **Docker network DNS** — resolve `.roxy` domains inside containers without `extra_hosts`
+- [ ] **Wildcard subdomains** — support `*.myapp.roxy` patterns
+- [ ] **Auto-start on boot** — launch daemon via launchd automatically
+- [ ] **Config hot reload** — pick up changes without restarting (already works with `roxy reload`!)
+
+Have a feature idea? [Open an issue](https://github.com/rbas/roxy/issues) and let's discuss!
+
+---
+
+## Get Started Now
+
+```bash
+# Build from source
+cargo install --path .
+
+# One-time setup
+sudo roxy install
+
+# Register your first project
+roxy register myapp.roxy --route "/=3000"
+
+# Start the proxy
+sudo roxy start
+```
+
+Visit `https://myapp.roxy` — no warnings, no config files, just works.
+
+Questions? Check the [full documentation](docs/README.md) or [open an issue](https://github.com/rbas/roxy/issues).
+
+**Find Roxy useful?** ⭐ Star the repo to help others discover it!
 
 ## Status
 
