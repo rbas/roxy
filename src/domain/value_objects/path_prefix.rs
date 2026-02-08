@@ -58,6 +58,11 @@ impl PathPrefix {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 impl fmt::Display for PathPrefix {
