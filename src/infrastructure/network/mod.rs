@@ -59,10 +59,11 @@ fn get_lan_ip_impl() -> Option<Ipv4Addr> {
         let output_str = String::from_utf8_lossy(&output.stdout);
         // hostname -I returns space-separated IPs, take the first private one
         for ip_str in output_str.split_whitespace() {
-            if let Ok(ip) = ip_str.parse::<Ipv4Addr>() {
-                if ip.is_private() && !ip.is_link_local() {
-                    return Some(ip);
-                }
+            if let Ok(ip) = ip_str.parse::<Ipv4Addr>()
+                && ip.is_private()
+                && !ip.is_link_local()
+            {
+                return Some(ip);
             }
         }
     }
