@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v0.1.0)"
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "roxy-test"
+          cache-on-failure: true
+
+      - name: Run unit tests
+        run: cargo test
+
+      - name: Run Clippy
+        run: cargo clippy -- -D warnings
+
+  build:
+    needs: test
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "roxy-release"
+          cache-on-failure: true
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          # Strip 'v' prefix if present
+          VERSION=$(echo "$TAG" | sed 's/^v//')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Build release binary
+        run: cargo build --release --bin roxy
+
+      - name: Rename binary and create symlink
+        run: |
+          cd target/release
+          mv roxy roxy-${{ steps.version.outputs.version }}-macos-arm64
+          ln -s roxy-${{ steps.version.outputs.version }}-macos-arm64 roxy
+
+      - name: Generate SHA256 checksum
+        run: |
+          cd target/release
+          shasum -a 256 roxy-${{ steps.version.outputs.version }}-macos-arm64 > roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
+          cat roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
+
+      - name: Install git-cliff
+        run: brew install git-cliff
+
+      - name: Generate changelog for this release
+        id: changelog
+        run: |
+          # Generate changelog for this specific tag
+          git cliff --tag ${{ steps.version.outputs.tag }} --unreleased --strip all > release_notes.md
+          cat release_notes.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Roxy ${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          files: |
+            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64
+            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
+            target/release/roxy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
