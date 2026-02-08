@@ -45,7 +45,10 @@ pub fn execute() -> Result<()> {
     if dns.is_configured() {
         println!("  DNS already configured, skipping...");
     } else {
-        println!("  Configuring DNS for *.roxy domains (port {})...", dns_port);
+        println!(
+            "  Configuring DNS for *.roxy domains (port {})...",
+            dns_port
+        );
         dns.setup(dns_port)?;
         println!("  DNS configured successfully.");
     }

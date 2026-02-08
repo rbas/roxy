@@ -145,7 +145,9 @@ impl Server {
                 _ = dns_handle => {},
             }
         } else {
-            warn!("No HTTPS certificates found, running HTTP only. Register a domain with sudo to enable HTTPS.");
+            warn!(
+                "No HTTPS certificates found, running HTTP only. Register a domain with sudo to enable HTTPS."
+            );
             tokio::select! {
                 r = http_server => r??,
                 _ = dns_handle => {},

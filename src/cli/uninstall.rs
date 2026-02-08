@@ -37,10 +37,7 @@ pub fn execute(force: bool) -> Result<()> {
     let cert_service = CertificateService::new();
 
     if !domains.is_empty() {
-        println!(
-            "  Removing {} domain certificate(s)...",
-            domains.len()
-        );
+        println!("  Removing {} domain certificate(s)...", domains.len());
 
         for registration in &domains {
             match cert_service.remove(&registration.domain) {

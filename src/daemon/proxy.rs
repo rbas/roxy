@@ -217,7 +217,13 @@ pub async fn proxy_request(target: &ProxyTarget, request: Request) -> Response {
         .query()
         .map(|q| format!("?{}", q))
         .unwrap_or_default();
-    let uri_string = format!("http://{}:{}{}{}", target.host(), target.port(), path, query);
+    let uri_string = format!(
+        "http://{}:{}{}{}",
+        target.host(),
+        target.port(),
+        path,
+        query
+    );
 
     let uri: Uri = match uri_string.parse() {
         Ok(u) => u,

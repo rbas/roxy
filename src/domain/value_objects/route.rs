@@ -30,6 +30,7 @@ pub enum RouteTargetError {
 }
 
 #[derive(Debug, Error)]
+#[allow(clippy::enum_variant_names)]
 pub enum RouteError {
     #[error("Invalid path prefix: {0}")]
     InvalidPathPrefix(#[from] PathPrefixError),

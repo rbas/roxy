@@ -6,8 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 use time::{Duration, OffsetDateTime};
 
-use super::ca::RootCA;
 use super::CertError;
+use super::ca::RootCA;
 use crate::domain::DomainName;
 
 /// Represents a generated certificate with its key pair
@@ -36,14 +36,20 @@ impl CertificateGenerator {
 
         let certs_dir = base_dir.join("certs");
 
-        Self { base_dir, certs_dir }
+        Self {
+            base_dir,
+            certs_dir,
+        }
     }
 
     /// Create a CertificateGenerator with a custom base directory (useful for testing)
     #[cfg(test)]
     pub fn with_base_dir(base_dir: PathBuf) -> Self {
         let certs_dir = base_dir.join("certs");
-        Self { base_dir, certs_dir }
+        Self {
+            base_dir,
+            certs_dir,
+        }
     }
 
     /// Generate a new certificate for the given domain, signed by the Root CA

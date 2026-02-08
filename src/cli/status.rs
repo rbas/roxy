@@ -26,7 +26,14 @@ pub fn execute() -> Result<()> {
         Some(pid) => {
             println!("Roxy daemon: running (PID: {})", pid);
             println!("  LAN IP: {}{}", lan_ip, offline_note);
-            println!("  Root CA: {}", if ca_installed { "installed" } else { "not installed" });
+            println!(
+                "  Root CA: {}",
+                if ca_installed {
+                    "installed"
+                } else {
+                    "not installed"
+                }
+            );
             println!("  HTTP:  http://localhost:80");
             println!("  HTTPS: https://localhost:443");
             if !lan_ip.is_loopback() {
@@ -36,7 +43,14 @@ pub fn execute() -> Result<()> {
         None => {
             println!("Roxy daemon: stopped");
             println!("  LAN IP: {}{}", lan_ip, offline_note);
-            println!("  Root CA: {}", if ca_installed { "installed" } else { "not installed" });
+            println!(
+                "  Root CA: {}",
+                if ca_installed {
+                    "installed"
+                } else {
+                    "not installed"
+                }
+            );
             println!("\nStart with: sudo roxy start");
         }
     }

@@ -151,7 +151,11 @@ fn main() -> Result<()> {
         Commands::Stop => cli::stop::execute(),
         Commands::Restart => cli::restart::execute(),
         Commands::Status => cli::status::execute(),
-        Commands::Logs { lines, clear, follow } => cli::logs::execute(lines, clear, follow),
+        Commands::Logs {
+            lines,
+            clear,
+            follow,
+        } => cli::logs::execute(lines, clear, follow),
         Commands::Reload => cli::reload::execute(),
     }
 }

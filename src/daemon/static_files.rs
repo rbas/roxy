@@ -17,4 +17,3 @@ pub async fn serve_static(root: PathBuf, request: Request) -> Response {
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response(),
     }
 }
-

@@ -36,9 +36,7 @@ fn get_ip_for_interface(interface: &str) -> Option<Ipv4Addr> {
         .ok()?;
 
     if output.status.success() {
-        let ip_str = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_string();
+        let ip_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let ip: Ipv4Addr = ip_str.parse().ok()?;
         // Ensure it's a private IP, not link-local
         if ip.is_private() && !ip.is_link_local() {

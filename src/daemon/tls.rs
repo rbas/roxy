@@ -5,10 +5,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use rustls::server::ResolvesServerCert;
-use rustls::sign::CertifiedKey;
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::server::ResolvesServerCert;
+use rustls::sign::CertifiedKey;
 use tokio_rustls::TlsAcceptor;
 
 use crate::domain::DomainName;

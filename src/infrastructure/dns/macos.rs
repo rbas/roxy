@@ -43,10 +43,7 @@ impl DnsService for MacOsDnsService {
     fn setup(&self, port: u16) -> Result<(), DnsError> {
         self.ensure_resolver_dir()?;
 
-        let content = format!(
-            "nameserver 127.0.0.1\nnameserver ::1\nport {}\n",
-            port
-        );
+        let content = format!("nameserver 127.0.0.1\nnameserver ::1\nport {}\n", port);
 
         fs::write(RESOLVER_FILE, content).map_err(|e| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
@@ -142,10 +139,7 @@ impl DnsService for MacOsDnsService {
 mod tests {
     #[test]
     fn test_resolver_content_format() {
-        let content = format!(
-            "nameserver 127.0.0.1\nnameserver ::1\nport {}\n",
-            1053
-        );
+        let content = format!("nameserver 127.0.0.1\nnameserver ::1\nport {}\n", 1053);
         assert!(content.ends_with('\n'));
         assert!(content.contains("nameserver"));
         assert!(content.contains("127.0.0.1"));
