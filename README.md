@@ -38,7 +38,8 @@ HTTPS for every local project.
 
 ```bash
 # 1. Install
-cargo install --path .
+curl -LO https://github.com/rbas/roxy/releases/latest/download/roxy
+chmod +x roxy
 
 # 2. One-time setup (creates Root CA, configures DNS)
 sudo roxy install
@@ -298,11 +299,25 @@ cargo install --path .
 roxy --version
 ```
 
-### Pre-built Binaries (Coming Soon!)
+### Pre-built Binaries
 
-macOS binaries will be available in
-[Releases](https://github.com/rbas/roxy/releases) soon. No Rust
-toolchain needed!
+Download the latest binary for your platform from the [Releases page](https://github.com/rbas/roxy/releases):
+
+**macOS (Apple Silicon):**
+
+```bash
+# Download the latest release
+curl -LO https://github.com/rbas/roxy/releases/latest/download/roxy
+
+# Make it executable and install
+chmod +x roxy
+sudo mv roxy /usr/local/bin/
+
+# Verify installation
+roxy --version
+```
+
+No Rust toolchain needed!
 
 ## What's Next
 
