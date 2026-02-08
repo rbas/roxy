@@ -54,6 +54,8 @@ sudo roxy start
 open https://myapp.roxy
 ```
 
+> **Note:** After first install, restart your browser for the certificates to be recognized.
+
 **That's it.** Trusted HTTPS, no warnings, no config files. Just works.
 
 **Find Roxy useful?** ⭐ [Star the repo](https://github.com/rbas/roxy)
@@ -236,6 +238,7 @@ roxy logs -n 100      # Last 100 lines
    - Creates a trusted Root Certificate Authority (CA)
    - Adds it to your system keychain (so browsers trust it)
    - Configures DNS to resolve `.roxy` domains to `127.0.0.1`
+   - **⚠️ Restart your browser** after first install for certificates to be recognized
 
 2. **`roxy register <domain>`**
    - Generates an SSL certificate signed by your Root CA
@@ -321,14 +324,15 @@ No Rust toolchain needed!
 
 ## What's Next
 
-Roxy is ready for daily development use on macOS. Future plans:
+Roxy is ready for daily development use on macOS. Recent additions and future plans:
 
+- [x] **Pre-built binaries** — download and run without building from source
+  (macOS ARM64)
 - [ ] **Linux support** — extend to Linux development environments
 - [ ] **Docker network DNS** — resolve `.roxy` domains inside containers
   without `extra_hosts`
 - [ ] **Wildcard subdomains** — support `*.myapp.roxy` patterns
 - [ ] **Auto-start on boot** — launch daemon via launchd automatically
-- [ ] **Pre-built binaries** — download and run without building from source
 
 Have a feature idea?
 [Open an issue](https://github.com/rbas/roxy/issues) and let's discuss!
