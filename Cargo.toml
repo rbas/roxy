@@ -65,3 +65,26 @@ panic = "abort"
 
 [dev-dependencies]
 tempfile = "3"
+
+[package.metadata.release]
+# Disable GPG signing (most developers don't have it configured)
+sign-commit = false
+sign-tag = false
+
+# Manual push for safety - let justfile handle it
+push = false
+
+# Enable tagging with version format
+tag = true
+tag-name = "v{{version}}"
+tag-message = "Release v{{version}}"
+
+# Commit message format (matches cliff.toml skip pattern)
+pre-release-commit-message = "chore(release): prepare release v{{version}}"
+consolidate-commits = false
+
+# Pre-release hook: generate changelog before version bump
+pre-release-hook = ["git-cliff", "--tag", "v{{version}}", "-o", "CHANGELOG.md"]
+
+# Don't verify tag on remote (allows flexibility)
+verify = false
