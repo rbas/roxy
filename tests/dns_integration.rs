@@ -4,7 +4,7 @@
 #[test]
 #[ignore] // Run manually with sudo
 fn test_dns_setup_and_cleanup() {
-    use roxy::infrastructure::dns::{DnsService, get_dns_service};
+    use roxy::infrastructure::dns::get_dns_service;
 
     let dns = get_dns_service().unwrap();
 

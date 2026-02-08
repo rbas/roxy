@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
-use crate::infrastructure::dns::{DnsService, get_dns_service};
+use crate::infrastructure::dns::get_dns_service;
 use crate::infrastructure::network::get_lan_ip;
 
 pub fn execute() -> Result<()> {

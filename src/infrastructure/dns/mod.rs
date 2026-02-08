@@ -50,10 +50,10 @@ mod macos;
 pub use macos::MacOsDnsService;
 
 /// Get the DNS service for the current platform
-pub fn get_dns_service() -> Result<impl DnsService, DnsError> {
+pub fn get_dns_service() -> Result<Box<dyn DnsService>, DnsError> {
     #[cfg(target_os = "macos")]
     {
-        Ok(MacOsDnsService::new())
+        Ok(Box::new(MacOsDnsService::new()))
     }
 
     #[cfg(not(target_os = "macos"))]

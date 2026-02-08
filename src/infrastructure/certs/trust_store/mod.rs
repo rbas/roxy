@@ -22,12 +22,12 @@ pub trait TrustStore {
 
 /// Get the trust store for the current platform
 #[cfg(target_os = "macos")]
-pub fn get_trust_store() -> Result<impl TrustStore, CertError> {
-    Ok(MacOsTrustStore::new())
+pub fn get_trust_store() -> Result<Box<dyn TrustStore>, CertError> {
+    Ok(Box::new(MacOsTrustStore::new()))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn get_trust_store() -> Result<impl TrustStore, CertError> {
+pub fn get_trust_store() -> Result<Box<dyn TrustStore>, CertError> {
     Err(CertError::TrustStoreError(format!(
         "Unsupported platform: {}",
         std::env::consts::OS

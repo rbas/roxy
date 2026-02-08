@@ -1,5 +1,5 @@
 use super::ca::RootCA;
-use super::trust_store::{TrustStore, get_trust_store};
+use super::trust_store::get_trust_store;
 use super::{CertError, CertificateGenerator};
 use crate::domain::DomainName;
 
