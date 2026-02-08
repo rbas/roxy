@@ -42,7 +42,6 @@ http-body-util = "0.1"
 # TLS
 tokio-rustls = "0.26"
 rustls = "0.23"
-rustls-pemfile = "2"
 
 # Signal handling
 ctrlc = "3.4"

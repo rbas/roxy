@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rustls::ServerConfig;
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
@@ -79,11 +78,8 @@ pub fn create_tls_acceptor(domains: &[DomainName]) -> Result<Option<TlsAcceptor>
 }
 
 fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
-    let file = File::open(path)
-        .with_context(|| format!("Failed to open cert file: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-
-    let certs: Vec<_> = rustls_pemfile::certs(&mut reader)
+    let certs: Vec<_> = CertificateDer::pem_file_iter(path)
+        .with_context(|| format!("Failed to open cert file: {}", path.display()))?
         .collect::<Result<Vec<_>, _>>()
         .context("Failed to parse certificates")?;
 
@@ -91,13 +87,6 @@ fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
 }
 
 fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
-    let file =
-        File::open(path).with_context(|| format!("Failed to open key file: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-
-    let key = rustls_pemfile::private_key(&mut reader)
-        .context("Failed to parse private key")?
-        .ok_or_else(|| anyhow::anyhow!("No private key found in file"))?;
-
-    Ok(key)
+    PrivateKeyDer::from_pem_file(path)
+        .with_context(|| format!("Failed to load private key from: {}", path.display()))
 }
