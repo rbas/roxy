@@ -37,9 +37,9 @@ HTTPS for every local project.
 ## Try It in 60 Seconds
 
 ```bash
-# 1. Install
-curl -LO https://github.com/rbas/roxy/releases/latest/download/roxy
-chmod +x roxy
+# 1. Install via Homebrew
+brew tap rbas/roxy
+brew install roxy
 
 # 2. One-time setup (creates Root CA, configures DNS)
 sudo roxy install
@@ -288,6 +288,31 @@ domain, no config files to edit.
 - **Rust** toolchain (for building from source)
 - **sudo** access (needed for ports 80/443 and DNS configuration)
 
+### Install via Homebrew (Recommended)
+
+```bash
+brew tap rbas/roxy
+brew install roxy
+```
+
+### Pre-built Binaries
+
+Download the latest binary for your platform from the [Releases page](https://github.com/rbas/roxy/releases):
+
+**macOS (Apple Silicon):**
+
+```bash
+# Download the latest release
+curl -LO https://github.com/rbas/roxy/releases/latest/download/roxy-macos-arm64.tar.gz
+tar -xzf roxy-macos-arm64.tar.gz
+
+# Install
+sudo mv roxy /usr/local/bin/
+
+# Verify installation
+roxy --version
+```
+
 ### Install from Source
 
 ```bash
@@ -302,32 +327,13 @@ cargo install --path .
 roxy --version
 ```
 
-### Pre-built Binaries
-
-Download the latest binary for your platform from the [Releases page](https://github.com/rbas/roxy/releases):
-
-**macOS (Apple Silicon):**
-
-```bash
-# Download the latest release
-curl -LO https://github.com/rbas/roxy/releases/latest/download/roxy
-
-# Make it executable and install
-chmod +x roxy
-sudo mv roxy /usr/local/bin/
-
-# Verify installation
-roxy --version
-```
-
-No Rust toolchain needed!
-
 ## What's Next
 
 Roxy is ready for daily development use on macOS. Recent additions and future plans:
 
 - [x] **Pre-built binaries** — download and run without building from source
   (macOS ARM64)
+- [x] **Homebrew support** — `brew tap rbas/roxy && brew install roxy`
 - [ ] **Linux support** — extend to Linux development environments
 - [ ] **Docker network DNS** — resolve `.roxy` domains inside containers
   without `extra_hosts`

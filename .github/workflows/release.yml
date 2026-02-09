@@ -73,17 +73,21 @@ jobs:
       - name: Build release binary
         run: cargo build --release --bin roxy
 
-      - name: Rename binary and create symlink
+      - name: Package binary
         run: |
           cd target/release
-          mv roxy roxy-${{ steps.version.outputs.version }}-macos-arm64
-          ln -s roxy-${{ steps.version.outputs.version }}-macos-arm64 roxy
+          # Copy raw binary with versioned name for direct downloads
+          cp roxy roxy-${{ steps.version.outputs.version }}-macos-arm64
+          # Create tarball with binary named "roxy" for Homebrew
+          tar -czf roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz roxy
 
-      - name: Generate SHA256 checksum
+      - name: Generate SHA256 checksums
         run: |
           cd target/release
           shasum -a 256 roxy-${{ steps.version.outputs.version }}-macos-arm64 > roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
+          shasum -a 256 roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz > roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz.sha256
           cat roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
+          cat roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz.sha256
 
       - name: Install git-cliff
         run: brew install git-cliff
@@ -104,6 +108,53 @@ jobs:
           files: |
             target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64
             target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
-            target/release/roxy
+            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
+            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA256=$(shasum -a 256 target/release/roxy-${VERSION}-macos-arm64.tar.gz | awk '{print $1}')
+
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/rbas/homebrew-roxy.git /tmp/homebrew-roxy
+          cd /tmp/homebrew-roxy
+
+          cat > Formula/roxy.rb << 'FORMULA'
+          class Roxy < Formula
+            desc "Local development proxy with custom .roxy domains and automatic HTTPS"
+            homepage "https://github.com/rbas/roxy"
+            license "MIT"
+          FORMULA
+
+          cat >> Formula/roxy.rb << FORMULA
+            version "${VERSION}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/rbas/roxy/releases/download/v${VERSION}/roxy-${VERSION}-macos-arm64.tar.gz"
+                sha256 "${SHA256}"
+              end
+            end
+          FORMULA
+
+          cat >> Formula/roxy.rb << 'FORMULA'
+
+            def install
+              bin.install "roxy"
+            end
+
+            test do
+              system "#{bin}/roxy", "--version"
+            end
+          end
+          FORMULA
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/roxy.rb
+          git commit -m "chore: update roxy to ${VERSION}"
+          git push
