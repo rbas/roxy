@@ -7,11 +7,27 @@ automatic HTTPS certificates. Think Laravel Valet, but written in Rust.
 All entries follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format,
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-02-09
+
+### Bug Fixes
+
+- Fix wss upgrade connection
+
+### CI/CD
+
+- Disable tests in master branch on push
+
+### Documentation
+
+- Update readme
+- Marked first task as done 🚀
+
 ## [0.1.0] - 2026-02-08
 
 ### Bug Fixes
 
 - Resolve type inference errors in cross-platform builds
+- Update release workflow to use macos-latest for tests
 
 ### CI/CD
 
