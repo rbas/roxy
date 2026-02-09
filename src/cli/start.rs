@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use std::env;
 use std::process::{Command, Stdio};
 
-use crate::infrastructure::config::Config;
+use crate::infrastructure::config::{Config, ConfigStore};
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
@@ -104,16 +104,20 @@ async fn run_server(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Res
     pid_file.write()?;
 
     // Handle Ctrl+C gracefully
-    let pid_path_for_cleanup = paths.pid_file.clone();
+    let cleanup_pid = PidFile::new(paths.pid_file.clone());
     ctrlc::set_handler(move || {
-        let cleanup = PidFile::new(pid_path_for_cleanup.clone());
-        let _ = cleanup.remove();
+        let _ = cleanup_pid.remove();
         std::process::exit(0);
     })?;
 
     println!("Starting Roxy daemon...");
 
-    let server = Server::new(config_path, paths)?;
+    // Load config fresh from disk (this path is used by the forked
+    // subprocess, so it must re-read from the config file)
+    let config_store = ConfigStore::new(config_path.to_path_buf());
+    let config = config_store.load()?;
+
+    let server = Server::new(&config, paths)?;
     let result = server.run().await;
 
     pid_file.remove()?;

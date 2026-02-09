@@ -1,5 +1,4 @@
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -11,7 +10,7 @@ use super::dns_server::DnsServer;
 use super::router::{AppState, create_router};
 use super::tls::create_tls_acceptor;
 use crate::domain::DomainName;
-use crate::infrastructure::config::ConfigStore;
+use crate::infrastructure::config::Config;
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::paths::RoxyPaths;
 
@@ -25,14 +24,12 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(config_path: &Path, paths: &RoxyPaths) -> Result<Self> {
-        let config_store = ConfigStore::new(config_path.to_path_buf());
-        let config = config_store.load()?;
-
+    pub fn new(config: &Config, paths: &RoxyPaths) -> Result<Self> {
         // Validate config before starting
         config.validate()?;
 
-        let state = Arc::new(AppState::new(config_path.to_path_buf())?);
+        let registrations: Vec<_> = config.domains.values().cloned().collect();
+        let state = Arc::new(AppState::new(registrations));
 
         // Get domains with HTTPS enabled
         let https_domains: Vec<DomainName> = config

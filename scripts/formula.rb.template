@@ -13,11 +13,11 @@ class Roxy < Formula
 
   service do
     name macos: "cz.rbas.roxy"
-    run [opt_bin/"roxy", "start", "--foreground"]
+    run [opt_bin/"roxy", "--config", "/etc/roxy/config.toml", "start", "--foreground"]
     keep_alive true
     require_root true
-    log_path var/"log/roxy/roxy.log"
-    error_log_path var/"log/roxy/roxy.log"
+    log_path "/var/log/roxy/roxy.log"
+    error_log_path "/var/log/roxy/roxy.log"
   end
 
   def caveats

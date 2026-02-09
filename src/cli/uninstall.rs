@@ -102,9 +102,13 @@ fn stop_daemon(pid: u32) -> Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Check if still running, force kill if needed
-    let status = Command::new("kill").args(["-0", &pid.to_string()]).output();
+    let still_running = Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
-    if status.is_ok() && status.unwrap().status.success() {
+    if still_running {
         // Still running, force kill
         Command::new("kill")
             .args(["-KILL", &pid.to_string()])

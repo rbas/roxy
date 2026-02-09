@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::{Config, ConfigStore};
@@ -21,12 +21,23 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths, config: &Config) -> Result
     }
 
     // Ensure data directory exists
-    std::fs::create_dir_all(&paths.data_dir)?;
-    std::fs::create_dir_all(&paths.certs_dir)?;
+    std::fs::create_dir_all(&paths.data_dir).with_context(|| {
+        format!(
+            "Failed to create data directory: {}",
+            paths.data_dir.display()
+        )
+    })?;
+    std::fs::create_dir_all(&paths.certs_dir).with_context(|| {
+        format!(
+            "Failed to create certs directory: {}",
+            paths.certs_dir.display()
+        )
+    })?;
 
     // Ensure log directory exists
     if let Some(log_dir) = paths.log_file.parent() {
-        std::fs::create_dir_all(log_dir)?;
+        std::fs::create_dir_all(log_dir)
+            .with_context(|| format!("Failed to create log directory: {}", log_dir.display()))?;
     }
 
     // Write default config if it doesn't exist

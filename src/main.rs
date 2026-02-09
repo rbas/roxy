@@ -143,7 +143,7 @@ enum RouteCommands {
 fn load_config_and_paths(config_path: &Path) -> Result<(Config, RoxyPaths)> {
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let config = config_store.load()?;
-    let paths = config.to_roxy_paths();
+    let paths = config.paths.clone();
     Ok((config, paths))
 }
 

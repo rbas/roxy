@@ -9,26 +9,27 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
 use tokio_rustls::TlsAcceptor;
+use tracing::warn;
 
 use crate::domain::DomainName;
 
-/// Custom certificate resolver that selects certificates based on SNI hostname
+/// Custom certificate resolver that selects certificates based on SNI hostname.
+/// Returns None for unknown domains, causing a clean TLS failure rather than
+/// serving a mismatched certificate.
 #[derive(Debug)]
 struct DomainCertResolver {
     certs: HashMap<String, Arc<CertifiedKey>>,
-    fallback: Arc<CertifiedKey>,
 }
 
 impl ResolvesServerCert for DomainCertResolver {
     fn resolve(&self, client_hello: rustls::server::ClientHello) -> Option<Arc<CertifiedKey>> {
-        // Get the SNI hostname from the client hello
         let hostname = client_hello.server_name()?;
 
-        // Look up certificate for this domain, fall back to first cert if not found
-        self.certs
-            .get(hostname)
-            .cloned()
-            .or_else(|| Some(self.fallback.clone()))
+        let cert = self.certs.get(hostname).cloned();
+        if cert.is_none() {
+            warn!(hostname = %hostname, "TLS: no certificate for domain");
+        }
+        cert
     }
 }
 
@@ -64,16 +65,7 @@ pub fn create_tls_acceptor(
         certs_map.insert(domain.as_str().to_string(), certified_key);
     }
 
-    // Use the first domain's cert as fallback
-    let fallback = certs_map
-        .get(domains[0].as_str())
-        .ok_or_else(|| anyhow::anyhow!("No fallback certificate available"))?
-        .clone();
-
-    let resolver = Arc::new(DomainCertResolver {
-        certs: certs_map,
-        fallback,
-    });
+    let resolver = Arc::new(DomainCertResolver { certs: certs_map });
 
     let config = ServerConfig::builder()
         .with_no_client_auth()

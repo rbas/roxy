@@ -30,16 +30,15 @@ pub enum RouteTargetError {
 }
 
 #[derive(Debug, Error)]
-#[allow(clippy::enum_variant_names)]
 pub enum RouteError {
     #[error("Invalid path prefix: {0}")]
-    InvalidPathPrefix(#[from] PathPrefixError),
+    PathPrefix(#[from] PathPrefixError),
 
     #[error("Invalid target: {0}")]
-    InvalidTarget(#[from] RouteTargetError),
+    Target(#[from] RouteTargetError),
 
     #[error("Invalid route format: expected 'PATH=TARGET', got '{0}'")]
-    InvalidFormat(String),
+    Format(String),
 }
 
 impl RouteTarget {
@@ -111,7 +110,7 @@ impl Route {
     pub fn parse(s: &str) -> Result<Self, RouteError> {
         let (path_str, target_str) = s
             .split_once('=')
-            .ok_or_else(|| RouteError::InvalidFormat(s.to_string()))?;
+            .ok_or_else(|| RouteError::Format(s.to_string()))?;
 
         let path = PathPrefix::new(path_str)?;
         let target = RouteTarget::parse(target_str)?;

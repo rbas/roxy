@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
@@ -12,7 +11,6 @@ use axum::{
 use tracing::{debug, info};
 
 use crate::domain::{DomainRegistration, RouteTarget};
-use crate::infrastructure::config::ConfigStore;
 
 use super::proxy::proxy_request;
 use super::static_files::serve_static;
@@ -23,16 +21,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config_path: PathBuf) -> anyhow::Result<Self> {
-        let config_store = ConfigStore::new(config_path);
-        let registrations = config_store.list_domains()?;
-
+    pub fn new(registrations: Vec<DomainRegistration>) -> Self {
         let domains: HashMap<String, DomainRegistration> = registrations
             .into_iter()
             .map(|r| (r.domain.as_str().to_string(), r))
             .collect();
 
-        Ok(Self { domains })
+        Self { domains }
     }
 
     pub fn get_domain(&self, host: &str) -> Option<&DomainRegistration> {

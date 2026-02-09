@@ -19,7 +19,8 @@ pub fn execute(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Result<(
     // Re-load config from disk to pick up changes
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let fresh_config = config_store.load()?;
+    let fresh_paths = fresh_config.paths.clone();
 
     println!("Starting Roxy daemon...");
-    start::execute(false, verbose, config_path, paths, &fresh_config)
+    start::execute(false, verbose, config_path, &fresh_paths, &fresh_config)
 }
