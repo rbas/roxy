@@ -1,12 +1,15 @@
+use std::path::Path;
+
 use anyhow::Result;
 
 use crate::domain::RouteTarget;
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
+use crate::infrastructure::paths::RoxyPaths;
 
-pub fn execute() -> Result<()> {
-    let config_store = ConfigStore::new();
-    let cert_service = CertificateService::new();
+pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
+    let config_store = ConfigStore::new(config_path.to_path_buf());
+    let cert_service = CertificateService::new(paths);
     let domains = config_store.list_domains()?;
 
     if domains.is_empty() {

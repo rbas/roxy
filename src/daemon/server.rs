@@ -1,4 +1,5 @@
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -12,6 +13,7 @@ use super::tls::create_tls_acceptor;
 use crate::domain::DomainName;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::network::get_lan_ip;
+use crate::infrastructure::paths::RoxyPaths;
 
 pub struct Server {
     state: Arc<AppState>,
@@ -23,14 +25,14 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new() -> Result<Self> {
-        let config_store = ConfigStore::new();
+    pub fn new(config_path: &Path, paths: &RoxyPaths) -> Result<Self> {
+        let config_store = ConfigStore::new(config_path.to_path_buf());
         let config = config_store.load()?;
 
         // Validate config before starting
         config.validate()?;
 
-        let state = Arc::new(AppState::new()?);
+        let state = Arc::new(AppState::new(config_path.to_path_buf())?);
 
         // Get domains with HTTPS enabled
         let https_domains: Vec<DomainName> = config
@@ -40,7 +42,7 @@ impl Server {
             .map(|d| d.domain.clone())
             .collect();
 
-        let tls_acceptor = create_tls_acceptor(&https_domains)?;
+        let tls_acceptor = create_tls_acceptor(&https_domains, &paths.certs_dir)?;
 
         // Get LAN IP for DNS responses (DNS server handles source-based resolution)
         let lan_ip = get_lan_ip();

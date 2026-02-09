@@ -17,35 +17,14 @@ pub struct Certificate {
     pub key_pem: String,
 }
 
-/// Paths to certificate and key files
-pub struct CertPaths {
-    pub cert: PathBuf,
-    pub key: PathBuf,
-}
-
 pub struct CertificateGenerator {
     base_dir: PathBuf,
     certs_dir: PathBuf,
 }
 
 impl CertificateGenerator {
-    pub fn new() -> Self {
-        let base_dir = dirs::home_dir()
-            .expect("Could not find home directory")
-            .join(".roxy");
-
-        let certs_dir = base_dir.join("certs");
-
-        Self {
-            base_dir,
-            certs_dir,
-        }
-    }
-
-    /// Create a CertificateGenerator with a custom base directory (useful for testing)
-    #[cfg(test)]
-    pub fn with_base_dir(base_dir: PathBuf) -> Self {
-        let certs_dir = base_dir.join("certs");
+    /// Create a CertificateGenerator with explicit directories
+    pub fn new(base_dir: PathBuf, certs_dir: PathBuf) -> Self {
         Self {
             base_dir,
             certs_dir,
@@ -54,7 +33,7 @@ impl CertificateGenerator {
 
     /// Generate a new certificate for the given domain, signed by the Root CA
     pub fn generate(&self, domain: &DomainName) -> Result<Certificate, CertError> {
-        let ca = RootCA::with_base_dir(self.base_dir.clone());
+        let ca = RootCA::new(self.base_dir.clone());
 
         // Ensure CA exists
         if !ca.exists() {
@@ -105,7 +84,7 @@ impl CertificateGenerator {
     }
 
     /// Save a certificate to disk
-    pub fn save(&self, cert: &Certificate) -> Result<CertPaths, CertError> {
+    pub fn save(&self, cert: &Certificate) -> Result<(), CertError> {
         // Ensure certs directory exists
         fs::create_dir_all(&self.certs_dir).map_err(|e| CertError::WriteError {
             path: self.certs_dir.clone(),
@@ -144,10 +123,7 @@ impl CertificateGenerator {
             })?;
         }
 
-        Ok(CertPaths {
-            cert: cert_path,
-            key: key_path,
-        })
+        Ok(())
     }
 
     /// Delete certificate files for a domain
@@ -181,28 +157,6 @@ impl CertificateGenerator {
         let key_path = self.certs_dir.join(format!("{}.key", domain.as_str()));
         cert_path.exists() && key_path.exists()
     }
-
-    /// Get paths to certificate files for a domain
-    pub fn get_paths(&self, domain: &DomainName) -> Option<CertPaths> {
-        let domain_str = domain.as_str();
-        let cert_path = self.certs_dir.join(format!("{}.crt", domain_str));
-        let key_path = self.certs_dir.join(format!("{}.key", domain_str));
-
-        if cert_path.exists() && key_path.exists() {
-            Some(CertPaths {
-                cert: cert_path,
-                key: key_path,
-            })
-        } else {
-            None
-        }
-    }
-}
-
-impl Default for CertificateGenerator {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[cfg(test)]
@@ -215,14 +169,15 @@ mod tests {
         // Create an isolated test environment
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let base_dir = temp_dir.path().to_path_buf();
+        let certs_dir = base_dir.join("certs");
 
         // Generate a test CA in the temp directory
-        let ca = RootCA::with_base_dir(base_dir.clone());
+        let ca = RootCA::new(base_dir.clone());
         ca.generate().expect("Failed to generate test CA");
 
         // Now test certificate generation
         let domain = DomainName::new("test.roxy").unwrap();
-        let generator = CertificateGenerator::with_base_dir(base_dir);
+        let generator = CertificateGenerator::new(base_dir, certs_dir);
 
         let cert = generator.generate(&domain).unwrap();
 

@@ -1,0 +1,36 @@
+class Roxy < Formula
+  desc "Local development proxy with custom .roxy domains and automatic HTTPS"
+  homepage "https://github.com/rbas/roxy"
+  license "MIT"
+  version "__VERSION__"
+
+  url "__URL__"
+  sha256 "__SHA256__"
+
+  def install
+    bin.install "roxy"
+  end
+
+  service do
+    name macos: "cz.rbas.roxy"
+    run [opt_bin/"roxy", "start", "--foreground"]
+    keep_alive true
+    require_root true
+    log_path var/"log/roxy/roxy.log"
+    error_log_path var/"log/roxy/roxy.log"
+  end
+
+  def caveats
+    <<~EOS
+      Roxy requires a one-time setup before use:
+        sudo roxy install
+
+      To start roxy now and auto-start at boot:
+        sudo brew services start roxy
+    EOS
+  end
+
+  test do
+    system "#{bin}/roxy", "--version"
+  end
+end

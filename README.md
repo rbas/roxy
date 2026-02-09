@@ -230,6 +230,26 @@ roxy logs -f          # Follow (like tail -f)
 roxy logs -n 100      # Last 100 lines
 ```
 
+## Auto-Start on Boot
+
+If you installed Roxy via Homebrew, you can use `brew services` to start Roxy
+automatically at boot:
+
+```bash
+# Start roxy now and auto-start at boot
+sudo brew services start roxy
+```
+
+Roxy stores its configuration in `/etc/roxy/config.toml`, so it works
+automatically when started by launchd at boot — no extra environment
+variables needed.
+
+To stop auto-start:
+
+```bash
+sudo brew services stop roxy
+```
+
 ## How It Works
 
 **Three steps, then forget about it:**
@@ -255,7 +275,9 @@ signed by your Root CA. WebSockets work transparently. DNS queries for
 
 **Clean and contained:**
 
-- All config, certs, and logs: `~/.roxy/`
+- Config, certs, and CA: `/etc/roxy/`
+- Logs: `/var/log/roxy/`
+- PID file: `/var/run/roxy.pid`
 - DNS configuration: `/etc/resolver/roxy` (macOS)
 - Run `roxy uninstall` to remove everything cleanly
 
@@ -338,7 +360,7 @@ Roxy is ready for daily development use on macOS. Recent additions and future pl
 - [ ] **Docker network DNS** — resolve `.roxy` domains inside containers
   without `extra_hosts`
 - [ ] **Wildcard subdomains** — support `*.myapp.roxy` patterns
-- [ ] **Auto-start on boot** — launch daemon via launchd automatically
+- [x] **Auto-start on boot** — launch daemon via launchd with `brew services`
 
 Have a feature idea?
 [Open an issue](https://github.com/rbas/roxy/issues) and let's discuss!

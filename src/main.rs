@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -5,6 +7,9 @@ mod cli;
 mod daemon;
 mod domain;
 mod infrastructure;
+
+use infrastructure::config::{Config, ConfigStore};
+use infrastructure::paths::RoxyPaths;
 
 #[derive(Parser)]
 #[command(name = "roxy")]
@@ -14,6 +19,10 @@ mod infrastructure;
     after_help = concat!("Heads up: Roxy is still finding her feet (v", env!("CARGO_PKG_VERSION"), ").\nThings may shift around. If something bites, let me know!\nhttps://github.com/rbas/roxy/issues")
 )]
 struct Cli {
+    /// Path to the config file
+    #[arg(short, long, global = true, default_value = "/etc/roxy/config.toml")]
+    config: PathBuf,
+
     /// Enable verbose output
     #[arg(short, long, global = true)]
     verbose: bool,
@@ -129,33 +138,51 @@ enum RouteCommands {
     },
 }
 
+/// Load config from file, or return defaults if the file doesn't exist.
+/// For `install`, the config file may not exist yet, so defaults are fine.
+fn load_config_and_paths(config_path: &Path) -> Result<(Config, RoxyPaths)> {
+    let config_store = ConfigStore::new(config_path.to_path_buf());
+    let config = config_store.load()?;
+    let paths = config.to_roxy_paths();
+    Ok((config, paths))
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config_path = &cli.config;
+
+    let (config, paths) = load_config_and_paths(config_path)?;
 
     match cli.command {
-        Commands::Install => cli::install::execute(),
-        Commands::Uninstall { force } => cli::uninstall::execute(force),
-        Commands::Register { domain, route } => cli::register::execute(domain, route),
-        Commands::Unregister { domain, force } => cli::unregister::execute(domain, force),
+        Commands::Install => cli::install::execute(config_path, &paths, &config),
+        Commands::Uninstall { force } => cli::uninstall::execute(force, config_path, &paths),
+        Commands::Register { domain, route } => {
+            cli::register::execute(domain, route, config_path, &paths)
+        }
+        Commands::Unregister { domain, force } => {
+            cli::unregister::execute(domain, force, config_path, &paths)
+        }
         Commands::Route { command } => match command {
             RouteCommands::Add {
                 domain,
                 path,
                 target,
-            } => cli::route::add(domain, path, target),
-            RouteCommands::Remove { domain, path } => cli::route::remove(domain, path),
-            RouteCommands::List { domain } => cli::route::list(domain),
+            } => cli::route::add(domain, path, target, config_path),
+            RouteCommands::Remove { domain, path } => cli::route::remove(domain, path, config_path),
+            RouteCommands::List { domain } => cli::route::list(domain, config_path),
         },
-        Commands::List => cli::list::execute(),
-        Commands::Start { foreground } => cli::start::execute(foreground, cli.verbose),
-        Commands::Stop => cli::stop::execute(),
-        Commands::Restart => cli::restart::execute(),
-        Commands::Status => cli::status::execute(),
+        Commands::List => cli::list::execute(config_path, &paths),
+        Commands::Start { foreground } => {
+            cli::start::execute(foreground, cli.verbose, config_path, &paths, &config)
+        }
+        Commands::Stop => cli::stop::execute(&paths),
+        Commands::Restart => cli::restart::execute(cli.verbose, config_path, &paths),
+        Commands::Status => cli::status::execute(config_path, &paths),
         Commands::Logs {
             lines,
             clear,
             follow,
-        } => cli::logs::execute(lines, clear, follow),
-        Commands::Reload => cli::reload::execute(),
+        } => cli::logs::execute(lines, clear, follow, &paths),
+        Commands::Reload => cli::reload::execute(cli.verbose, config_path, &paths),
     }
 }

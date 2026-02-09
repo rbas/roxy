@@ -119,40 +119,17 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           SHA256=$(shasum -a 256 target/release/roxy-${VERSION}-macos-arm64.tar.gz | awk '{print $1}')
+          URL="https://github.com/rbas/roxy/releases/download/v${VERSION}/roxy-${VERSION}-macos-arm64.tar.gz"
 
           git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/rbas/homebrew-roxy.git /tmp/homebrew-roxy
+
+          sed -e "s|__VERSION__|${VERSION}|g" \
+              -e "s|__URL__|${URL}|g" \
+              -e "s|__SHA256__|${SHA256}|g" \
+              scripts/formula.rb.template \
+              > /tmp/homebrew-roxy/Formula/roxy.rb
+
           cd /tmp/homebrew-roxy
-
-          cat > Formula/roxy.rb << 'FORMULA'
-          class Roxy < Formula
-            desc "Local development proxy with custom .roxy domains and automatic HTTPS"
-            homepage "https://github.com/rbas/roxy"
-            license "MIT"
-          FORMULA
-
-          cat >> Formula/roxy.rb << FORMULA
-            version "${VERSION}"
-
-            on_macos do
-              if Hardware::CPU.arm?
-                url "https://github.com/rbas/roxy/releases/download/v${VERSION}/roxy-${VERSION}-macos-arm64.tar.gz"
-                sha256 "${SHA256}"
-              end
-            end
-          FORMULA
-
-          cat >> Formula/roxy.rb << 'FORMULA'
-
-            def install
-              bin.install "roxy"
-            end
-
-            test do
-              system "#{bin}/roxy", "--version"
-            end
-          end
-          FORMULA
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/roxy.rb

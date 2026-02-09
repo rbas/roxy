@@ -13,31 +13,23 @@ use super::CertError;
 /// This CA is used to sign all domain certificates. Users only need to trust
 /// the CA once, and all domain certificates will be automatically trusted.
 pub struct RootCA {
-    roxy_dir: PathBuf,
+    data_dir: PathBuf,
 }
 
 impl RootCA {
-    pub fn new() -> Self {
-        let roxy_dir = dirs::home_dir()
-            .expect("Could not find home directory")
-            .join(".roxy");
-
-        Self { roxy_dir }
-    }
-
-    /// Create a RootCA with a custom base directory (useful for testing)
-    pub fn with_base_dir(roxy_dir: PathBuf) -> Self {
-        Self { roxy_dir }
+    /// Create a RootCA with the given base directory
+    pub fn new(data_dir: PathBuf) -> Self {
+        Self { data_dir }
     }
 
     /// Path to the CA certificate
     pub fn cert_path(&self) -> PathBuf {
-        self.roxy_dir.join("ca.crt")
+        self.data_dir.join("ca.crt")
     }
 
     /// Path to the CA private key
     pub fn key_path(&self) -> PathBuf {
-        self.roxy_dir.join("ca.key")
+        self.data_dir.join("ca.key")
     }
 
     /// Check if the CA already exists
@@ -48,8 +40,8 @@ impl RootCA {
     /// Generate a new Root CA certificate
     pub fn generate(&self) -> Result<(), CertError> {
         // Ensure directory exists
-        fs::create_dir_all(&self.roxy_dir).map_err(|e| CertError::WriteError {
-            path: self.roxy_dir.clone(),
+        fs::create_dir_all(&self.data_dir).map_err(|e| CertError::WriteError {
+            path: self.data_dir.clone(),
             source: e,
         })?;
 
@@ -180,19 +172,13 @@ impl RootCA {
     }
 }
 
-impl Default for RootCA {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_ca_paths() {
-        let ca = RootCA::new();
+        let ca = RootCA::new(PathBuf::from("/tmp/test-roxy"));
         assert!(ca.cert_path().to_string_lossy().contains("ca.crt"));
         assert!(ca.key_path().to_string_lossy().contains("ca.key"));
     }

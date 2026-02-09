@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
@@ -22,8 +23,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new() -> anyhow::Result<Self> {
-        let config_store = ConfigStore::new();
+    pub fn new(config_path: PathBuf) -> anyhow::Result<Self> {
+        let config_store = ConfigStore::new(config_path);
         let registrations = config_store.list_domains()?;
 
         let domains: HashMap<String, DomainRegistration> = registrations

@@ -11,15 +11,6 @@ pub enum TracingOutput {
     File(PathBuf),
 }
 
-/// Returns the default log file path: ~/.roxy/logs/roxy.log
-pub fn default_log_path() -> PathBuf {
-    dirs::home_dir()
-        .expect("Could not find home directory")
-        .join(".roxy")
-        .join("logs")
-        .join("roxy.log")
-}
-
 /// Initialize tracing based on configuration
 /// Priority: ROXY_LOG env > verbose flag > default (info)
 pub fn init_tracing(verbose: bool, output: TracingOutput) {

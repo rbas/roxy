@@ -1,16 +1,18 @@
+use std::path::Path;
+
 use anyhow::Result;
 
 use crate::domain::{DomainName, PathPrefix, Route, RouteTarget};
 use crate::infrastructure::config::ConfigStore;
 
 /// Add a route to an existing domain
-pub fn add(domain: String, path: String, target: String) -> Result<()> {
+pub fn add(domain: String, path: String, target: String, config_path: &Path) -> Result<()> {
     let domain = DomainName::new(&domain)?;
     let path_prefix = PathPrefix::new(&path)?;
     let route_target = RouteTarget::parse(&target)
         .map_err(|e| anyhow::anyhow!("Invalid target '{}': {}", target, e))?;
 
-    let config_store = ConfigStore::new();
+    let config_store = ConfigStore::new(config_path.to_path_buf());
 
     // Get existing registration
     let mut registration = config_store
@@ -31,11 +33,11 @@ pub fn add(domain: String, path: String, target: String) -> Result<()> {
 }
 
 /// Remove a route from a domain
-pub fn remove(domain: String, path: String) -> Result<()> {
+pub fn remove(domain: String, path: String, config_path: &Path) -> Result<()> {
     let domain = DomainName::new(&domain)?;
     let path_prefix = PathPrefix::new(&path)?;
 
-    let config_store = ConfigStore::new();
+    let config_store = ConfigStore::new(config_path.to_path_buf());
 
     // Get existing registration
     let mut registration = config_store
@@ -55,10 +57,10 @@ pub fn remove(domain: String, path: String) -> Result<()> {
 }
 
 /// List all routes for a domain
-pub fn list(domain: String) -> Result<()> {
+pub fn list(domain: String, config_path: &Path) -> Result<()> {
     let domain = DomainName::new(&domain)?;
 
-    let config_store = ConfigStore::new();
+    let config_store = ConfigStore::new(config_path.to_path_buf());
 
     // Get existing registration
     let registration = config_store

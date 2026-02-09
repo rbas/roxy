@@ -11,7 +11,6 @@ use rustls::sign::CertifiedKey;
 use tokio_rustls::TlsAcceptor;
 
 use crate::domain::DomainName;
-use crate::infrastructure::certs::CertificateGenerator;
 
 /// Custom certificate resolver that selects certificates based on SNI hostname
 #[derive(Debug)]
@@ -34,22 +33,28 @@ impl ResolvesServerCert for DomainCertResolver {
 }
 
 /// Load all domain certificates into a single TLS acceptor with SNI
-pub fn create_tls_acceptor(domains: &[DomainName]) -> Result<Option<TlsAcceptor>> {
+pub fn create_tls_acceptor(
+    domains: &[DomainName],
+    certs_dir: &Path,
+) -> Result<Option<TlsAcceptor>> {
     if domains.is_empty() {
         return Ok(None);
     }
 
     let mut certs_map = HashMap::new();
-    let generator = CertificateGenerator::new();
 
-    // Load all domain certificates
+    // Load all domain certificates directly from certs_dir
     for domain in domains {
-        let paths = generator
-            .get_paths(domain)
-            .ok_or_else(|| anyhow::anyhow!("No certificate found for {}", domain))?;
+        let domain_str = domain.as_str();
+        let cert_path = certs_dir.join(format!("{}.crt", domain_str));
+        let key_path = certs_dir.join(format!("{}.key", domain_str));
 
-        let certs = load_certs(&paths.cert)?;
-        let key = load_private_key(&paths.key)?;
+        if !cert_path.exists() || !key_path.exists() {
+            anyhow::bail!("No certificate found for {}", domain);
+        }
+
+        let certs = load_certs(&cert_path)?;
+        let key = load_private_key(&key_path)?;
 
         // Create a signing key using aws-lc-rs (default crypto provider)
         let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key)

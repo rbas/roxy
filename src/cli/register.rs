@@ -1,10 +1,18 @@
+use std::path::Path;
+
 use anyhow::{Result, bail};
 
 use crate::domain::{DomainName, DomainRegistration, Route};
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
+use crate::infrastructure::paths::RoxyPaths;
 
-pub fn execute(domain: String, routes: Vec<String>) -> Result<()> {
+pub fn execute(
+    domain: String,
+    routes: Vec<String>,
+    config_path: &Path,
+    paths: &RoxyPaths,
+) -> Result<()> {
     // Validate domain name
     let domain = DomainName::new(&domain)?;
 
@@ -19,8 +27,8 @@ pub fn execute(domain: String, routes: Vec<String>) -> Result<()> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("Invalid route: {}", e))?;
 
-    let config_store = ConfigStore::new();
-    let cert_service = CertificateService::new();
+    let config_store = ConfigStore::new(config_path.to_path_buf());
+    let cert_service = CertificateService::new(paths);
 
     // Check if already registered
     if config_store.get_domain(&domain)?.is_some() {
