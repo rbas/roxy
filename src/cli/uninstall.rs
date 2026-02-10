@@ -72,19 +72,15 @@ pub fn execute(force: bool, config_path: &Path, paths: &RoxyPaths) -> Result<()>
         println!("  Directory removed.");
     }
 
-    // Step 5: Remove PID file
-    if paths.pid_file.exists() {
-        println!("  Removing PID file...");
-        fs::remove_file(&paths.pid_file)?;
+    // Step 5: Remove PID file (if it still exists)
+    if fs::remove_file(&paths.pid_file).is_ok() {
         println!("  PID file removed.");
     }
 
     // Step 6: Remove log directory
     if let Some(log_dir) = paths.log_file.parent()
-        && log_dir.exists()
+        && fs::remove_dir_all(log_dir).is_ok()
     {
-        println!("  Removing {}...", log_dir.display());
-        fs::remove_dir_all(log_dir)?;
         println!("  Log directory removed.");
     }
 
