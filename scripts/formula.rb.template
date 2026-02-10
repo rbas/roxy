@@ -4,8 +4,14 @@ class Roxy < Formula
   license "MIT"
   version "__VERSION__"
 
-  url "__URL__"
-  sha256 "__SHA256__"
+  on_macos do
+    if Hardware::CPU.arm?
+      url "__URL__"
+      sha256 "__SHA256__"
+    else
+      odie "Roxy currently only supports Apple Silicon (ARM64). Intel Macs are not yet supported."
+    end
+  end
 
   def install
     bin.install "roxy"

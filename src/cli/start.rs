@@ -39,12 +39,10 @@ pub fn execute(
         let exe = env::current_exe()?;
 
         let mut cmd = Command::new(exe);
-        cmd.args([
-            "--config",
-            &config_path.to_string_lossy(),
-            "start",
-            "--foreground",
-        ]);
+        cmd.arg("--config")
+            .arg(config_path)
+            .arg("start")
+            .arg("--foreground");
 
         // Pass verbose flag via environment to subprocess
         if verbose {
