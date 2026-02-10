@@ -54,6 +54,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # DNS
 simple-dns = "0.11"
+base64 = "0.22.1"
 
 [profile.release]
 strip = true
