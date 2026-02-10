@@ -5,14 +5,14 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
-use crate::infrastructure::tracing::default_log_path;
+use crate::infrastructure::paths::RoxyPaths;
 
-pub fn execute(lines: usize, clear: bool, follow: bool) -> Result<()> {
-    let log_path = default_log_path();
+pub fn execute(lines: usize, clear: bool, follow: bool, paths: &RoxyPaths) -> Result<()> {
+    let log_path = &paths.log_file;
 
     if clear {
         if log_path.exists() {
-            fs::remove_file(&log_path).context("Failed to clear log file")?;
+            fs::remove_file(log_path).context("Failed to clear log file")?;
         }
         println!("Logs cleared.");
         return Ok(());
@@ -26,14 +26,14 @@ pub fn execute(lines: usize, clear: bool, follow: bool) -> Result<()> {
     }
 
     // Show last N lines
-    let content = tail_lines(&log_path, lines)?;
+    let content = tail_lines(log_path, lines)?;
     if !content.is_empty() {
         print!("{}", content);
     }
 
     // Follow mode: keep watching for new lines
     if follow {
-        tail_follow(&log_path)?;
+        tail_follow(log_path)?;
     }
 
     Ok(())

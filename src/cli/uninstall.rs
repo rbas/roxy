@@ -1,20 +1,23 @@
-use anyhow::Result;
 use std::fs;
+use std::path::Path;
 use std::process::Command;
+
+use anyhow::Result;
 
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::dns::get_dns_service;
+use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
 
-pub fn execute(force: bool) -> Result<()> {
+pub fn execute(force: bool, config_path: &Path, paths: &RoxyPaths) -> Result<()> {
     if !force {
         println!("This will remove all Roxy configuration including:");
         println!("  - Stop the running daemon");
         println!("  - DNS configuration for *.roxy domains");
         println!("  - All registered domains");
         println!("  - All SSL certificates from system trust store");
-        println!("  - All data in ~/.roxy/");
+        println!("  - All data in {}/", paths.data_dir.display());
         println!("\nRun with --force to confirm, or press Ctrl+C to cancel.");
         return Ok(());
     }
@@ -22,7 +25,7 @@ pub fn execute(force: bool) -> Result<()> {
     println!("Uninstalling Roxy...\n");
 
     // Step 1: Stop daemon if running
-    let pid_file = PidFile::new();
+    let pid_file = PidFile::new(paths.pid_file.clone());
     if let Some(pid) = pid_file.get_running_pid()? {
         println!("  Stopping daemon (PID: {})...", pid);
         stop_daemon(pid)?;
@@ -31,10 +34,10 @@ pub fn execute(force: bool) -> Result<()> {
     }
 
     // Step 2: Remove certificates from trust store
-    let config_store = ConfigStore::new();
+    let config_store = ConfigStore::new(config_path.to_path_buf());
     let domains = config_store.list_domains().unwrap_or_default();
 
-    let cert_service = CertificateService::new();
+    let cert_service = CertificateService::new(paths);
 
     if !domains.is_empty() {
         println!("  Removing {} domain certificate(s)...", domains.len());
@@ -62,12 +65,23 @@ pub fn execute(force: bool) -> Result<()> {
         println!("  DNS configuration removed.");
     }
 
-    // Step 4: Remove ~/.roxy/ directory entirely
-    let roxy_dir = config_store.config_dir();
-    if roxy_dir.exists() {
-        println!("  Removing {}...", roxy_dir.display());
-        fs::remove_dir_all(&roxy_dir)?;
+    // Step 4: Remove data directory entirely
+    if paths.data_dir.exists() {
+        println!("  Removing {}...", paths.data_dir.display());
+        fs::remove_dir_all(&paths.data_dir)?;
         println!("  Directory removed.");
+    }
+
+    // Step 5: Remove PID file (if it still exists)
+    if fs::remove_file(&paths.pid_file).is_ok() {
+        println!("  PID file removed.");
+    }
+
+    // Step 6: Remove log directory
+    if let Some(log_dir) = paths.log_file.parent()
+        && fs::remove_dir_all(log_dir).is_ok()
+    {
+        println!("  Log directory removed.");
     }
 
     println!("\nRoxy uninstallation complete!");
@@ -86,9 +100,13 @@ fn stop_daemon(pid: u32) -> Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Check if still running, force kill if needed
-    let status = Command::new("kill").args(["-0", &pid.to_string()]).output();
+    let still_running = Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
-    if status.is_ok() && status.unwrap().status.success() {
+    if still_running {
         // Still running, force kill
         Command::new("kill")
             .args(["-KILL", &pid.to_string()])

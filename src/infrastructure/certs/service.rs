@@ -2,6 +2,7 @@ use super::ca::RootCA;
 use super::trust_store::get_trust_store;
 use super::{CertError, CertificateGenerator};
 use crate::domain::DomainName;
+use crate::infrastructure::paths::RoxyPaths;
 
 /// High-level service for certificate operations
 pub struct CertificateService {
@@ -10,10 +11,11 @@ pub struct CertificateService {
 }
 
 impl CertificateService {
-    pub fn new() -> Self {
+    /// Create a new CertificateService with paths from RoxyPaths
+    pub fn new(paths: &RoxyPaths) -> Self {
         Self {
-            generator: CertificateGenerator::new(),
-            ca: RootCA::new(),
+            generator: CertificateGenerator::new(paths.data_dir.clone(), paths.certs_dir.clone()),
+            ca: RootCA::new(paths.data_dir.clone()),
         }
     }
 
@@ -88,11 +90,5 @@ impl CertificateService {
         trust_store.remove_ca()?;
         self.ca.delete()?;
         Ok(())
-    }
-}
-
-impl Default for CertificateService {
-    fn default() -> Self {
-        Self::new()
     }
 }

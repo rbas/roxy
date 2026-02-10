@@ -30,7 +30,7 @@ open https://myapp.roxy
 | `sudo roxy install`                | Initial setup              |
 | `sudo roxy uninstall [--force]`    | Full cleanup               |
 | `sudo roxy register <domain> ...`  | Register domain            |
-| `roxy unregister <domain>`         | Remove domain              |
+| `sudo roxy unregister <domain>`    | Remove domain              |
 | `roxy list`                        | Show all domains           |
 | `sudo roxy route add ...`          | Add route to domain        |
 | `roxy route remove ...`            | Remove route from domain   |
@@ -42,7 +42,9 @@ open https://myapp.roxy
 | `roxy status`                      | Show daemon status         |
 | `roxy logs [-n N] [-f]`            | View or follow daemon logs |
 
-**Note:** Commands that modify system configuration (CA certs, DNS) or control the daemon (runs on ports 80/443) require `sudo`.
+**Note:** Commands that modify system configuration
+(CA certs, DNS) or control the daemon (runs on ports
+80/443) require `sudo`.
 
 ## Route Targets
 
@@ -87,16 +89,18 @@ roxy route list app.roxy
 ## Files and Directories
 
 ```text
-~/.roxy/
+/etc/roxy/
 ├── config.toml          # Main configuration
-├── roxy.pid             # PID file (when daemon runs)
-├── certs/
-│   ├── ca.key           # Root CA private key
-│   ├── ca.crt           # Root CA certificate
-│   ├── <domain>.key     # Per-domain private key
-│   └── <domain>.crt     # Per-domain certificate
-└── logs/
-    └── roxy.log         # Daemon log file
+├── ca.key               # Root CA private key
+├── ca.crt               # Root CA certificate
+└── certs/
+    ├── <domain>.key     # Per-domain private key
+    └── <domain>.crt     # Per-domain certificate
+
+/var/run/roxy.pid        # PID file (when daemon runs)
+
+/var/log/roxy/
+└── roxy.log             # Daemon log file
 ```
 
 macOS DNS resolver file (created by `roxy install`):
@@ -108,10 +112,29 @@ macOS DNS resolver file (created by `roxy install`):
 This tells macOS to resolve all `*.roxy` domains through
 the local DNS server.
 
+All paths are configurable via the `[paths]` section in
+`config.toml` (see [Configuration](#configuration)).
+
+## Auto-Start with Homebrew
+
+If you installed Roxy via Homebrew, use `brew services`
+to start it automatically at boot:
+
+```bash
+# Start now and auto-start at boot
+sudo brew services start roxy
+
+# Stop auto-start
+sudo brew services stop roxy
+```
+
+When managed by `brew services`, Roxy runs in foreground
+mode and launchd handles process supervision.
+
 ## Daemon: Foreground vs Background
 
 **Background** (default) — forks to the background,
-writes a PID file, logs to `~/.roxy/logs/roxy.log`:
+writes a PID file, logs to `/var/log/roxy/roxy.log`:
 
 ```bash
 sudo roxy start
@@ -141,7 +164,7 @@ Change the log level (highest priority first):
    `ROXY_LOG=debug sudo roxy start`
 2. **CLI flag** — `sudo roxy start --verbose`
    (sets debug level)
-3. **Config file** — edit `~/.roxy/config.toml`:
+3. **Config file** — edit `/etc/roxy/config.toml`:
 
    ```toml
    [daemon]
@@ -152,9 +175,25 @@ Change the log level (highest priority first):
 
 Available levels: `error`, `warn`, `info`, `debug`.
 
+## Global Options
+
+All commands accept these global flags:
+
+| Flag | Default | Description |
+| ---- | ------- | ----------- |
+| `-c`, `--config <PATH>` | `/etc/roxy/config.toml` | Config file |
+| `-v`, `--verbose` | off | Enable debug output |
+
+Example using a custom config:
+
+```bash
+sudo roxy -c /opt/roxy/config.toml start
+```
+
 ## Configuration
 
-The configuration lives in `~/.roxy/config.toml`.
+The configuration lives in `/etc/roxy/config.toml`
+(override with `--config`).
 
 ### Daemon Section
 
@@ -189,6 +228,21 @@ target = "127.0.0.1:3001"
 
 Domain names must end with `.roxy` and can contain
 letters, numbers, hyphens, and dots (for subdomains).
+
+### Paths Section
+
+Override where Roxy stores its data:
+
+```toml
+[paths]
+data_dir = "/etc/roxy"
+pid_file = "/var/run/roxy.pid"
+log_file = "/var/log/roxy/roxy.log"
+certs_dir = "/etc/roxy/certs"
+```
+
+The values above are the defaults. You only need this
+section if you want different locations.
 
 ## Using Roxy with Docker
 
@@ -265,8 +319,8 @@ sudo lsof -i :443
 sudo lsof -i :1053
 ```
 
-Stop the conflicting service or configure Roxy to use different ports
-in `~/.roxy/config.toml`.
+Stop the conflicting service or configure Roxy to use
+different ports in `/etc/roxy/config.toml`.
 
 ### Backend Service Not Responding
 

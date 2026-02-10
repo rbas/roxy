@@ -1,13 +1,22 @@
+use std::path::Path;
+
 use anyhow::{Context, Result, bail};
 use std::env;
 use std::process::{Command, Stdio};
 
-use crate::infrastructure::config::ConfigStore;
+use crate::infrastructure::config::{Config, ConfigStore};
 use crate::infrastructure::network::get_lan_ip;
+use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
 
-pub fn execute(foreground: bool, verbose: bool) -> Result<()> {
-    let pid_file = PidFile::new();
+pub fn execute(
+    foreground: bool,
+    verbose: bool,
+    config_path: &Path,
+    paths: &RoxyPaths,
+    config: &Config,
+) -> Result<()> {
+    let pid_file = PidFile::new(paths.pid_file.clone());
 
     // Check if already running
     if let Some(pid) = pid_file.get_running_pid()? {
@@ -18,24 +27,22 @@ pub fn execute(foreground: bool, verbose: bool) -> Result<()> {
     }
 
     // Validate configuration before starting
-    let config_store = ConfigStore::new();
-    let config = config_store
-        .load()
-        .context("Failed to load configuration")?;
-
     config
         .validate()
         .context("Configuration validation failed")?;
 
     if foreground {
         // Run in foreground (blocking)
-        run_server(verbose)
+        run_server(verbose, config_path, paths)
     } else {
         // Fork to background
         let exe = env::current_exe()?;
 
         let mut cmd = Command::new(exe);
-        cmd.args(["start", "--foreground"]);
+        cmd.arg("--config")
+            .arg(config_path)
+            .arg("start")
+            .arg("--foreground");
 
         // Pass verbose flag via environment to subprocess
         if verbose {
@@ -72,12 +79,12 @@ pub fn execute(foreground: bool, verbose: bool) -> Result<()> {
 }
 
 #[tokio::main]
-async fn run_server(verbose: bool) -> Result<()> {
+async fn run_server(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Result<()> {
     use std::io::IsTerminal;
 
     use crate::daemon::Server;
     use crate::infrastructure::pid::PidFile;
-    use crate::infrastructure::tracing::{TracingOutput, default_log_path, init_tracing};
+    use crate::infrastructure::tracing::{TracingOutput, init_tracing};
     use tracing::info;
 
     // When running interactively (stdout is a TTY), log to stdout
@@ -85,25 +92,30 @@ async fn run_server(verbose: bool) -> Result<()> {
     let output = if std::io::stdout().is_terminal() {
         TracingOutput::Stdout
     } else {
-        TracingOutput::File(default_log_path())
+        TracingOutput::File(paths.log_file.clone())
     };
     init_tracing(verbose, output);
 
     info!("Roxy daemon started");
 
-    let pid_file = PidFile::new();
+    let pid_file = PidFile::new(paths.pid_file.clone());
     pid_file.write()?;
 
     // Handle Ctrl+C gracefully
-    let pid_file_cleanup = PidFile::new();
+    let cleanup_pid = PidFile::new(paths.pid_file.clone());
     ctrlc::set_handler(move || {
-        let _ = pid_file_cleanup.remove();
+        let _ = cleanup_pid.remove();
         std::process::exit(0);
     })?;
 
     println!("Starting Roxy daemon...");
 
-    let server = Server::new()?;
+    // Load config fresh from disk (this path is used by the forked
+    // subprocess, so it must re-read from the config file)
+    let config_store = ConfigStore::new(config_path.to_path_buf());
+    let config = config_store.load()?;
+
+    let server = Server::new(&config, paths)?;
     let result = server.run().await;
 
     pid_file.remove()?;

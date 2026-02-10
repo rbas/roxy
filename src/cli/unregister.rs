@@ -1,14 +1,17 @@
+use std::path::Path;
+
 use anyhow::{Result, bail};
 
 use crate::domain::DomainName;
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
+use crate::infrastructure::paths::RoxyPaths;
 
-pub fn execute(domain: String, force: bool) -> Result<()> {
+pub fn execute(domain: String, force: bool, config_path: &Path, paths: &RoxyPaths) -> Result<()> {
     let domain = DomainName::new(&domain)?;
 
-    let config_store = ConfigStore::new();
-    let cert_service = CertificateService::new();
+    let config_store = ConfigStore::new(config_path.to_path_buf());
+    let cert_service = CertificateService::new(paths);
 
     // Check if domain exists
     let registration = config_store.get_domain(&domain)?;

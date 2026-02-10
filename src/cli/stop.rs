@@ -1,9 +1,10 @@
 use anyhow::{Result, bail};
 
+use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
 
-pub fn execute() -> Result<()> {
-    let pid_file = PidFile::new();
+pub fn execute(paths: &RoxyPaths) -> Result<()> {
+    let pid_file = PidFile::new(paths.pid_file.clone());
 
     let pid = match pid_file.get_running_pid()? {
         Some(pid) => pid,

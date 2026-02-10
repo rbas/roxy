@@ -1,15 +1,16 @@
-use anyhow::Result;
+use std::path::Path;
+
+use anyhow::{Context, Result};
 
 use crate::infrastructure::certs::CertificateService;
-use crate::infrastructure::config::ConfigStore;
+use crate::infrastructure::config::{Config, ConfigStore};
 use crate::infrastructure::dns::get_dns_service;
 use crate::infrastructure::network::get_lan_ip;
+use crate::infrastructure::paths::RoxyPaths;
 
-pub fn execute() -> Result<()> {
+pub fn execute(config_path: &Path, paths: &RoxyPaths, config: &Config) -> Result<()> {
     println!("Setting up Roxy...\n");
 
-    let config_store = ConfigStore::new();
-    let config = config_store.load()?;
     let dns_port = config.daemon.dns_port;
 
     // Detect LAN IP
@@ -19,8 +20,35 @@ pub fn execute() -> Result<()> {
         println!("  Warning: No network detected, using localhost.");
     }
 
+    // Ensure data directory exists
+    std::fs::create_dir_all(&paths.data_dir).with_context(|| {
+        format!(
+            "Failed to create data directory: {}",
+            paths.data_dir.display()
+        )
+    })?;
+    std::fs::create_dir_all(&paths.certs_dir).with_context(|| {
+        format!(
+            "Failed to create certs directory: {}",
+            paths.certs_dir.display()
+        )
+    })?;
+
+    // Ensure log directory exists
+    if let Some(log_dir) = paths.log_file.parent() {
+        std::fs::create_dir_all(log_dir)
+            .with_context(|| format!("Failed to create log directory: {}", log_dir.display()))?;
+    }
+
+    // Write default config if it doesn't exist
+    if !config_path.exists() {
+        let config_store = ConfigStore::new(config_path.to_path_buf());
+        config_store.save(config)?;
+        println!("  Created config file: {}", config_path.display());
+    }
+
     // Step 1: Initialize Root CA
-    let cert_service = CertificateService::new();
+    let cert_service = CertificateService::new(paths);
     match cert_service.is_ca_installed() {
         Ok(true) => {
             println!("  Root CA already installed, skipping...");

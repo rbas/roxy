@@ -1,4 +1,5 @@
 use crate::domain::{DomainName, DomainRegistration};
+use crate::infrastructure::paths::RoxyPaths;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -114,6 +115,9 @@ pub struct Config {
     pub daemon: DaemonConfig,
 
     #[serde(default)]
+    pub paths: RoxyPaths,
+
+    #[serde(default)]
     pub domains: HashMap<String, DomainRegistration>,
 }
 
@@ -136,24 +140,16 @@ pub struct ConfigStore {
 }
 
 impl ConfigStore {
-    pub fn new() -> Self {
-        let config_dir = dirs::home_dir()
-            .expect("Could not find home directory")
-            .join(".roxy");
-
-        Self {
-            path: config_dir.join("config.toml"),
-        }
-    }
-
-    pub fn config_dir(&self) -> PathBuf {
-        self.path.parent().unwrap().to_path_buf()
+    /// Create a new ConfigStore pointing at the given config file path
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
     }
 
     fn ensure_config_dir(&self) -> Result<(), ConfigError> {
-        let dir = self.config_dir();
-        if !dir.exists() {
-            fs::create_dir_all(&dir)?;
+        if let Some(dir) = self.path.parent()
+            && !dir.exists()
+        {
+            fs::create_dir_all(dir)?;
         }
         Ok(())
     }
@@ -224,11 +220,5 @@ impl ConfigStore {
     pub fn list_domains(&self) -> Result<Vec<DomainRegistration>, ConfigError> {
         let config = self.load()?;
         Ok(config.domains.into_values().collect())
-    }
-}
-
-impl Default for ConfigStore {
-    fn default() -> Self {
-        Self::new()
     }
 }

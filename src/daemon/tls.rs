@@ -9,47 +9,53 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
 use tokio_rustls::TlsAcceptor;
+use tracing::warn;
 
 use crate::domain::DomainName;
-use crate::infrastructure::certs::CertificateGenerator;
 
-/// Custom certificate resolver that selects certificates based on SNI hostname
+/// Custom certificate resolver that selects certificates based on SNI hostname.
+/// Returns None for unknown domains, causing a clean TLS failure rather than
+/// serving a mismatched certificate.
 #[derive(Debug)]
 struct DomainCertResolver {
     certs: HashMap<String, Arc<CertifiedKey>>,
-    fallback: Arc<CertifiedKey>,
 }
 
 impl ResolvesServerCert for DomainCertResolver {
     fn resolve(&self, client_hello: rustls::server::ClientHello) -> Option<Arc<CertifiedKey>> {
-        // Get the SNI hostname from the client hello
         let hostname = client_hello.server_name()?;
 
-        // Look up certificate for this domain, fall back to first cert if not found
-        self.certs
-            .get(hostname)
-            .cloned()
-            .or_else(|| Some(self.fallback.clone()))
+        let cert = self.certs.get(hostname).cloned();
+        if cert.is_none() {
+            warn!(hostname = %hostname, "TLS: no certificate for domain");
+        }
+        cert
     }
 }
 
 /// Load all domain certificates into a single TLS acceptor with SNI
-pub fn create_tls_acceptor(domains: &[DomainName]) -> Result<Option<TlsAcceptor>> {
+pub fn create_tls_acceptor(
+    domains: &[DomainName],
+    certs_dir: &Path,
+) -> Result<Option<TlsAcceptor>> {
     if domains.is_empty() {
         return Ok(None);
     }
 
     let mut certs_map = HashMap::new();
-    let generator = CertificateGenerator::new();
 
-    // Load all domain certificates
+    // Load all domain certificates directly from certs_dir
     for domain in domains {
-        let paths = generator
-            .get_paths(domain)
-            .ok_or_else(|| anyhow::anyhow!("No certificate found for {}", domain))?;
+        let domain_str = domain.as_str();
+        let cert_path = certs_dir.join(format!("{}.crt", domain_str));
+        let key_path = certs_dir.join(format!("{}.key", domain_str));
 
-        let certs = load_certs(&paths.cert)?;
-        let key = load_private_key(&paths.key)?;
+        if !cert_path.exists() || !key_path.exists() {
+            anyhow::bail!("No certificate found for {}", domain);
+        }
+
+        let certs = load_certs(&cert_path)?;
+        let key = load_private_key(&key_path)?;
 
         // Create a signing key using aws-lc-rs (default crypto provider)
         let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key)
@@ -59,16 +65,7 @@ pub fn create_tls_acceptor(domains: &[DomainName]) -> Result<Option<TlsAcceptor>
         certs_map.insert(domain.as_str().to_string(), certified_key);
     }
 
-    // Use the first domain's cert as fallback
-    let fallback = certs_map
-        .get(domains[0].as_str())
-        .ok_or_else(|| anyhow::anyhow!("No fallback certificate available"))?
-        .clone();
-
-    let resolver = Arc::new(DomainCertResolver {
-        certs: certs_map,
-        fallback,
-    });
+    let resolver = Arc::new(DomainCertResolver { certs: certs_map });
 
     let config = ServerConfig::builder()
         .with_no_client_auth()

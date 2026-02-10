@@ -1,14 +1,17 @@
+use std::path::Path;
+
 use anyhow::Result;
 
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::network::get_lan_ip;
+use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
 
-pub fn execute() -> Result<()> {
-    let pid_file = PidFile::new();
-    let config_store = ConfigStore::new();
-    let cert_service = CertificateService::new();
+pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
+    let pid_file = PidFile::new(paths.pid_file.clone());
+    let config_store = ConfigStore::new(config_path.to_path_buf());
+    let cert_service = CertificateService::new(paths);
 
     // Get LAN IP
     let lan_ip = get_lan_ip();

@@ -8,18 +8,16 @@ pub struct PidFile {
 }
 
 impl PidFile {
-    pub fn new() -> Self {
-        let path = dirs::home_dir()
-            .expect("Could not find home directory")
-            .join(".roxy")
-            .join("roxy.pid");
+    pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
     /// Write current process PID to file
     pub fn write(&self) -> Result<()> {
         let pid = process::id();
-        fs::create_dir_all(self.path.parent().unwrap())?;
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         fs::write(&self.path, pid.to_string()).context("Failed to write PID file")?;
         Ok(())
     }
@@ -68,10 +66,4 @@ fn process_exists(pid: u32) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
-}
-
-impl Default for PidFile {
-    fn default() -> Self {
-        Self::new()
-    }
 }
