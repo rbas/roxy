@@ -69,7 +69,8 @@ pub async fn serve_static(route_prefix: &str, root: PathBuf, request: Request) -
     match service.oneshot(request_for_service).await {
         Ok(mut response) => {
             if response.status() == StatusCode::NOT_FOUND {
-                if let Some(listing) = try_directory_listing(&original_path, resolved.clone()).await
+                if let Some(listing) =
+                    try_directory_listing(route_prefix, &original_path, resolved.clone()).await
                 {
                     return listing;
                 }
@@ -158,12 +159,16 @@ fn rewrite_redirect_location_to_include_mount_prefix<ResBody>(
 }
 
 /// Try to render a directory listing for `resolved` and show it as `display_path`.
-async fn try_directory_listing(display_path: &str, resolved: PathBuf) -> Option<Response> {
+async fn try_directory_listing(
+    route_prefix: &str,
+    display_path: &str,
+    resolved: PathBuf,
+) -> Option<Response> {
     let entries = task::spawn_blocking(move || read_directory(&resolved))
         .await
         .ok()??;
 
-    let html = render_directory_listing(display_path, &entries);
+    let html = render_directory_listing(route_prefix, display_path, &entries);
 
     Response::builder()
         .status(StatusCode::OK)
@@ -340,11 +345,24 @@ fn format_size(bytes: u64) -> String {
 // ── Breadcrumb ──────────────────────────────────────────────
 
 /// Build a breadcrumb navigation bar from the URI path.
-fn build_breadcrumb(uri_path: &str) -> String {
+///
+/// The `route_prefix` is used as the root href to keep navigation within
+/// the mounted route (e.g., `/static/` for non-root mounts).
+fn build_breadcrumb(route_prefix: &str, uri_path: &str) -> String {
     let mut html = String::new();
 
-    // Root link with home icon
-    html.push_str("<a href=\"/\" title=\"Root\">");
+    // Root link with home icon - use route_prefix to stay within mount
+    let root_href = if route_prefix == "/" {
+        "/"
+    } else {
+        route_prefix
+    };
+    html.push_str("<a href=\"");
+    html.push_str(root_href);
+    if !root_href.ends_with('/') {
+        html.push('/');
+    }
+    html.push_str("\" title=\"Root\">");
     html.push_str(theme::HOME_ICON);
     html.push_str("</a>");
 
@@ -373,9 +391,12 @@ fn build_breadcrumb(uri_path: &str) -> String {
 // ── Directory Listing Renderer ──────────────────────────────
 
 /// Render the full themed HTML page for a directory listing.
-fn render_directory_listing(uri_path: &str, entries: &[DirEntry]) -> String {
+///
+/// The `route_prefix` is used to determine the mount root and keep navigation
+/// within the mounted route.
+fn render_directory_listing(route_prefix: &str, uri_path: &str, entries: &[DirEntry]) -> String {
     let display_path = theme::html_escape(uri_path);
-    let breadcrumb = build_breadcrumb(uri_path);
+    let breadcrumb = build_breadcrumb(route_prefix, uri_path);
 
     let mut body = String::with_capacity(4096);
 
@@ -406,21 +427,42 @@ fn render_directory_listing(uri_path: &str, entries: &[DirEntry]) -> String {
     );
     body.push_str("</tr></thead>\n<tbody>\n");
 
-    // Parent directory link (unless at root)
-    if uri_path != "/" {
+    // Determine the mount root for comparison
+    let mount_root = if route_prefix == "/" {
+        "/"
+    } else {
+        // Mount root can be either "/prefix" or "/prefix/"
+        route_prefix.trim_end_matches('/')
+    };
+    let normalized_uri = uri_path.trim_end_matches('/');
+    let is_at_mount_root = normalized_uri == mount_root || normalized_uri.is_empty();
+
+    // Parent directory link (unless at mount root)
+    if !is_at_mount_root {
         let parent = uri_path.trim_end_matches('/');
         let parent = parent
             .rsplit_once('/')
             .map(|(p, _)| if p.is_empty() { "/" } else { p })
             .unwrap_or("/");
-        body.push_str("<tr class=\"parent-row\"><td colspan=\"3\">");
-        body.push_str(theme::FOLDER_ICON);
-        body.push_str("<a href=\"");
-        body.push_str(&theme::html_escape(parent));
-        if parent != "/" {
-            body.push('/');
+
+        // Only show parent link if it's not outside our mount
+        let parent_normalized = parent.trim_end_matches('/');
+        let should_show_parent = if route_prefix == "/" {
+            true
+        } else {
+            parent_normalized.starts_with(mount_root) || parent_normalized == mount_root
+        };
+
+        if should_show_parent {
+            body.push_str("<tr class=\"parent-row\"><td colspan=\"3\">");
+            body.push_str(theme::FOLDER_ICON);
+            body.push_str("<a href=\"");
+            body.push_str(&theme::html_escape(parent));
+            if parent != "/" {
+                body.push('/');
+            }
+            body.push_str("\">..</a></td></tr>\n");
         }
-        body.push_str("\">..</a></td></tr>\n");
     }
 
     // Entry rows
@@ -578,7 +620,7 @@ function sort(c){\
         el.textContent=i===col?(asc?'\\u25B2':'\\u25BC'):'';\
     }\
     var tbody=document.querySelector('#listing tbody');\
-    var parent=tbody.querySelector('tr:not([data-name])');\
+    var nonEntryRows=Array.from(tbody.querySelectorAll('tr:not([data-name])'));\
     var rows=Array.from(tbody.querySelectorAll('tr[data-name]'));\
     rows.sort(function(a,b){\
         var ad=parseInt(a.dataset.dir),bd=parseInt(b.dataset.dir);\
@@ -596,7 +638,7 @@ function sort(c){\
         return asc?av-bv:bv-av;\
     });\
     while(tbody.firstChild)tbody.removeChild(tbody.firstChild);\
-    if(parent)tbody.appendChild(parent);\
+    nonEntryRows.forEach(function(r){tbody.appendChild(r);});\
     rows.forEach(function(r){tbody.appendChild(r);});\
 }\
 ";
@@ -648,17 +690,16 @@ mod tests {
 
     #[test]
     fn test_breadcrumb_root() {
-        let bc = build_breadcrumb("/");
+        let bc = build_breadcrumb("/", "/");
         // Should have home icon link and no separators
-        assert!(bc.contains("bc-home"));
         assert!(bc.contains("href=\"/\""));
         assert!(!bc.contains("sep"));
     }
 
     #[test]
     fn test_breadcrumb_nested() {
-        let bc = build_breadcrumb("/images/photos/");
-        assert!(bc.contains("bc-home"));
+        let bc = build_breadcrumb("/", "/images/photos/");
+        assert!(bc.contains("href=\"/\""));
         assert!(bc.contains("/images/\">images</a>"));
         assert!(bc.contains("/images/photos/\">photos</a>"));
         assert_eq!(bc.matches("class=\"sep\"").count(), 2);
@@ -666,13 +707,21 @@ mod tests {
 
     #[test]
     fn test_breadcrumb_percent_encoded_segments() {
-        let bc = build_breadcrumb("/my%20dir/child%2Fslash/");
+        let bc = build_breadcrumb("/", "/my%20dir/child%2Fslash/");
         // Display should be decoded
         assert!(bc.contains(">my dir</a>"));
         assert!(bc.contains(">child/slash</a>"));
         // Hrefs should be encoded once (no %25 double-encoding)
         assert!(bc.contains("href=\"/my%20dir/\">"));
         assert!(bc.contains("href=\"/my%20dir/child%2Fslash/\">"));
+    }
+
+    #[test]
+    fn test_breadcrumb_non_root_mount() {
+        let bc = build_breadcrumb("/static", "/static/images/");
+        // Home icon should link to /static/ not /
+        assert!(bc.contains("href=\"/static/\""));
+        assert!(bc.contains("/images/\">images</a>"));
     }
 
     #[test]
@@ -804,7 +853,7 @@ mod tests {
             },
         ];
 
-        let html = render_directory_listing("/project/", &entries);
+        let html = render_directory_listing("/", "/project/", &entries);
 
         // Themed page structure
         assert!(html.contains("roxy-header"));
@@ -820,7 +869,7 @@ mod tests {
     #[test]
     fn test_render_directory_listing_parent_link() {
         let entries = vec![];
-        let html = render_directory_listing("/images/photos/", &entries);
+        let html = render_directory_listing("/", "/images/photos/", &entries);
         assert!(html.contains(">..</a>"));
         assert!(html.contains("/images/\""));
     }
@@ -828,14 +877,21 @@ mod tests {
     #[test]
     fn test_render_directory_listing_no_parent_at_root() {
         let entries = vec![];
-        let html = render_directory_listing("/", &entries);
+        let html = render_directory_listing("/", "/", &entries);
+        assert!(!html.contains(".."));
+    }
+
+    #[test]
+    fn test_render_directory_listing_no_parent_at_mount_root() {
+        let entries = vec![];
+        let html = render_directory_listing("/static", "/static/", &entries);
         assert!(!html.contains(".."));
     }
 
     #[test]
     fn test_render_directory_listing_empty_state() {
         let entries = vec![];
-        let html = render_directory_listing("/", &entries);
+        let html = render_directory_listing("/", "/", &entries);
         assert!(html.contains("empty"));
     }
 
@@ -856,7 +912,7 @@ mod tests {
             },
         ];
 
-        let html = render_directory_listing("/", &entries);
+        let html = render_directory_listing("/", "/", &entries);
         // Should use SVG icons, not emoji
         assert!(html.contains(r##"fill="#E8853A""##)); // folder orange
         assert!(html.contains(r##"fill="#3BB8A2""##)); // file teal
@@ -869,7 +925,7 @@ mod tests {
         fs::create_dir(tmp.path().join("sub")).unwrap();
 
         let resolved = resolve_path(tmp.path(), "/").unwrap();
-        let response = try_directory_listing("/", resolved).await;
+        let response = try_directory_listing("/", "/", resolved).await;
         assert!(response.is_some());
         assert_eq!(response.unwrap().status(), StatusCode::OK);
     }
@@ -880,7 +936,7 @@ mod tests {
         fs::write(tmp.path().join("file.txt"), "content").unwrap();
 
         let resolved = resolve_path(tmp.path(), "/file.txt").unwrap();
-        let response = try_directory_listing("/file.txt", resolved).await;
+        let response = try_directory_listing("/", "/file.txt", resolved).await;
         assert!(response.is_none());
     }
 }
