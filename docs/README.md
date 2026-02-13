@@ -86,6 +86,34 @@ roxy route remove app.roxy /webhooks
 roxy route list app.roxy
 ```
 
+## Static File Serving
+
+When serving static files from a directory, Roxy provides:
+
+**Index file support** — if a directory contains `index.html`,
+it's served automatically:
+
+```bash
+# Directory structure:
+# /var/www/mysite/
+# ├── index.html
+# ├── about/
+# │   └── index.html
+# └── assets/
+#     └── style.css
+
+roxy register site.roxy --route "/=/var/www/mysite"
+
+# Behavior:
+# https://site.roxy          → serves /var/www/mysite/index.html
+# https://site.roxy/about/   → serves /var/www/mysite/about/index.html
+# https://site.roxy/assets/  → shows file browser (no index.html)
+```
+
+**File browser** — directories without `index.html` display an
+automatic directory listing, making it easy to browse files and
+navigate subdirectories
+
 ## Files and Directories
 
 ```text

@@ -100,9 +100,9 @@ All domains work simultaneously. No port conflicts. No config files to manage.
 - ✓ **Real-time traffic logs** — See every HTTP request and WebSocket
   connection with `roxy logs -f`
 - ✓ **WebSocket support** — Full proxying and connection lifecycle tracking
-- ✓ **Static file serving** — Serve directories without a local server
+- ✓ **Static file serving** — Serve directories with automatic `index.html`
+  support and file browser
 - ✓ **LAN access** — Access your projects from phone/tablet on the same network
-- ✓ **Hot reload** — Update routes with `roxy reload`, no restart needed
 - ✓ **Any tech stack** — Works with Next.js, Rails, Django, Express,
   Go, Rust, PHP... anything on any port
 
@@ -220,9 +220,6 @@ sudo roxy start --foreground # Start in foreground
 sudo roxy stop
 sudo roxy restart
 roxy status
-
-# Reload config without restarting
-sudo roxy reload
 
 # View logs
 roxy logs
@@ -356,11 +353,12 @@ Roxy is ready for daily development use on macOS. Recent additions and future pl
 - [x] **Pre-built binaries** — download and run without building from source
   (macOS ARM64)
 - [x] **Homebrew support** — `brew tap rbas/roxy && brew install roxy`
+- [x] **Auto-start on boot** — launch daemon via launchd with `brew services`
+- [x] **File browser** — automatic directory listing for static file routes
 - [ ] **Linux support** — extend to Linux development environments
 - [ ] **Docker network DNS** — resolve `.roxy` domains inside containers
   without `extra_hosts`
 - [ ] **Wildcard subdomains** — support `*.myapp.roxy` patterns
-- [x] **Auto-start on boot** — launch daemon via launchd with `brew services`
 
 Have a feature idea?
 [Open an issue](https://github.com/rbas/roxy/issues) and let's discuss!
