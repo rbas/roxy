@@ -24,7 +24,12 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
 
     for reg in domains {
         // Check actual certificate status
-        let https_status = if cert_service.exists(&reg.domain) {
+        let has_cert = if reg.wildcard {
+            cert_service.exists_wildcard(&reg.domain)
+        } else {
+            cert_service.exists(&reg.domain)
+        };
+        let https_status = if has_cert {
             match cert_service.is_trusted(&reg.domain) {
                 Ok(true) => "(HTTPS)",
                 Ok(false) => "(HTTPS untrusted)",
@@ -34,7 +39,7 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
             ""
         };
 
-        println!("  {} {}", reg.domain, https_status);
+        println!("  {} {}", reg.display_pattern(), https_status);
 
         for route in &reg.routes {
             let target_str = match &route.target {

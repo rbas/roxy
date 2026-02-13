@@ -68,7 +68,11 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
             } else {
                 "http"
             };
-            println!("  {}://{}", scheme, domain.domain);
+            if domain.wildcard {
+                println!("  {}://{} (wildcard)", scheme, domain.domain);
+            } else {
+                println!("  {}://{}", scheme, domain.domain);
+            }
         }
     }
 

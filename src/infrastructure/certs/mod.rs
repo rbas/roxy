@@ -9,6 +9,12 @@ pub mod trust_store;
 pub use generator::CertificateGenerator;
 pub use service::CertificateService;
 
+/// Filename prefix for wildcard certificates stored in `certs_dir`.
+///
+/// We intentionally use underscores so it can't collide with a valid `.roxy`
+/// domain (underscores are rejected by `DomainName` validation).
+pub const WILDCARD_CERT_PREFIX: &str = "__wildcard__.";
+
 #[derive(Error, Debug)]
 pub enum CertError {
     #[error("Failed to generate certificate: {0}")]

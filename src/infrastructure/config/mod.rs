@@ -175,7 +175,7 @@ impl ConfigStore {
     pub fn add_domain(&self, registration: DomainRegistration) -> Result<(), ConfigError> {
         let mut config = self.load()?;
 
-        let key = registration.domain.as_str().to_string();
+        let key = registration.config_key();
         if config.domains.contains_key(&key) {
             return Err(ConfigError::DomainExists(key));
         }
@@ -197,6 +197,22 @@ impl ConfigStore {
         Ok(registration)
     }
 
+    pub fn remove_wildcard_domain(
+        &self,
+        domain: &DomainName,
+    ) -> Result<DomainRegistration, ConfigError> {
+        let mut config = self.load()?;
+
+        let key = format!("*.{}", domain.as_str());
+        let registration = config
+            .domains
+            .remove(&key)
+            .ok_or_else(|| ConfigError::DomainNotFound(key.clone()))?;
+
+        self.save(&config)?;
+        Ok(registration)
+    }
+
     pub fn get_domain(
         &self,
         domain: &DomainName,
@@ -205,10 +221,19 @@ impl ConfigStore {
         Ok(config.domains.get(domain.as_str()).cloned())
     }
 
+    pub fn get_wildcard_domain(
+        &self,
+        domain: &DomainName,
+    ) -> Result<Option<DomainRegistration>, ConfigError> {
+        let config = self.load()?;
+        let key = format!("*.{}", domain.as_str());
+        Ok(config.domains.get(&key).cloned())
+    }
+
     pub fn update_domain(&self, registration: DomainRegistration) -> Result<(), ConfigError> {
         let mut config = self.load()?;
 
-        let key = registration.domain.as_str().to_string();
+        let key = registration.config_key();
         if !config.domains.contains_key(&key) {
             return Err(ConfigError::DomainNotFound(key));
         }

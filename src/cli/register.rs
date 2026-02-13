@@ -9,6 +9,7 @@ use crate::infrastructure::paths::RoxyPaths;
 
 pub fn execute(
     domain: String,
+    wildcard: bool,
     routes: Vec<String>,
     config_path: &Path,
     paths: &RoxyPaths,
@@ -31,20 +32,43 @@ pub fn execute(
     let cert_service = CertificateService::new(paths);
 
     // Check if already registered
-    if config_store.get_domain(&domain)?.is_some() {
+    let existing = if wildcard {
+        config_store.get_wildcard_domain(&domain)?
+    } else {
+        config_store.get_domain(&domain)?
+    };
+    if existing.is_some() {
+        let pattern = if wildcard {
+            format!("*.{}", domain.as_str())
+        } else {
+            domain.as_str().to_string()
+        };
         bail!(
-            "Domain '{}' is already registered. Use 'roxy unregister {}' first.",
+            "Domain '{}' is already registered. Use 'roxy unregister {}{}' first.",
+            pattern,
             domain,
-            domain
+            if wildcard { " --wildcard" } else { "" }
         );
     }
 
     // Create registration
-    let mut registration = DomainRegistration::new(domain.clone(), parsed_routes);
+    let mut registration = if wildcard {
+        DomainRegistration::new_wildcard(domain.clone(), parsed_routes)
+    } else {
+        DomainRegistration::new(domain.clone(), parsed_routes)
+    };
 
     // Generate and install certificate
-    println!("Generating SSL certificate for {}...", domain);
-    match cert_service.create_and_install(&domain) {
+    println!(
+        "Generating SSL certificate for {}...",
+        registration.display_pattern()
+    );
+    let cert_result = if wildcard {
+        cert_service.create_and_install_wildcard(&domain)
+    } else {
+        cert_service.create_and_install(&domain)
+    };
+    match cert_result {
         Ok(()) => {
             registration.enable_https();
             println!("  Certificate installed and trusted.");
@@ -53,25 +77,30 @@ pub fn execute(
             // Certificate generation failed - warn but continue
             eprintln!("  Warning: Failed to generate certificate: {}", e);
             eprintln!("  HTTPS will not be available for this domain.");
-            eprintln!("  Run 'sudo roxy register {}' to enable HTTPS.", domain);
+            eprintln!(
+                "  Run 'sudo roxy register {}{}' to enable HTTPS.",
+                domain,
+                if wildcard { " --wildcard" } else { "" }
+            );
         }
     }
 
     // Save to config
     config_store.add_domain(registration.clone())?;
 
-    println!("\nRegistered domain: {}", domain);
+    println!("\nRegistered domain: {}", registration.display_pattern());
     println!("  Routes:");
     for route in &registration.routes {
         println!("    {} -> {}", route.path, route.target);
     }
+    let https_enabled = if wildcard {
+        cert_service.exists_wildcard(&domain)
+    } else {
+        cert_service.exists(&domain)
+    };
     println!(
         "  HTTPS: {}",
-        if cert_service.exists(&domain) {
-            "enabled"
-        } else {
-            "disabled"
-        }
+        if https_enabled { "enabled" } else { "disabled" }
     );
     println!("\nStart the proxy with: roxy start");
 

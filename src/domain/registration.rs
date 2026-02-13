@@ -26,6 +26,8 @@ pub struct DomainRegistration {
     pub domain: DomainName,
     pub routes: Vec<Route>,
     pub https_enabled: bool,
+    #[serde(default)]
+    pub wildcard: bool,
 }
 
 impl DomainRegistration {
@@ -34,11 +36,33 @@ impl DomainRegistration {
             domain,
             routes,
             https_enabled: false, // Will be enabled after cert generation
+            wildcard: false,
+        }
+    }
+
+    pub fn new_wildcard(domain: DomainName, routes: Vec<Route>) -> Self {
+        Self {
+            domain,
+            routes,
+            https_enabled: false, // Will be enabled after cert generation
+            wildcard: true,
         }
     }
 
     pub fn enable_https(&mut self) {
         self.https_enabled = true;
+    }
+
+    pub fn config_key(&self) -> String {
+        if self.wildcard {
+            format!("*.{}", self.domain.as_str())
+        } else {
+            self.domain.as_str().to_string()
+        }
+    }
+
+    pub fn display_pattern(&self) -> String {
+        self.config_key()
     }
 
     /// Find the best matching route for a request path.

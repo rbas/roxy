@@ -64,6 +64,22 @@ impl CertificateService {
         Ok(())
     }
 
+    /// Generate a wildcard certificate for a base domain (signed by the Root CA).
+    ///
+    /// The certificate includes SANs for base + *.base.
+    pub fn create_and_install_wildcard(&self, base_domain: &DomainName) -> Result<(), CertError> {
+        // Ensure CA exists
+        if !self.ca.exists() {
+            return Err(CertError::GenerationError(
+                "Root CA not found. Run 'sudo roxy install' first.".to_string(),
+            ));
+        }
+
+        let cert = self.generator.generate_wildcard(base_domain)?;
+        self.generator.save(&cert)?;
+        Ok(())
+    }
+
     /// Remove certificate files for a domain
     /// Note: No trust store removal needed since we use CA-based trust
     pub fn remove(&self, domain: &DomainName) -> Result<(), CertError> {
@@ -73,9 +89,20 @@ impl CertificateService {
         Ok(())
     }
 
+    /// Remove wildcard certificate files for a base domain.
+    pub fn remove_wildcard(&self, base_domain: &DomainName) -> Result<(), CertError> {
+        self.generator.delete_wildcard(base_domain)?;
+        Ok(())
+    }
+
     /// Check if certificate exists for a domain
     pub fn exists(&self, domain: &DomainName) -> bool {
         self.generator.exists(domain)
+    }
+
+    /// Check if a wildcard certificate exists for a base domain
+    pub fn exists_wildcard(&self, base_domain: &DomainName) -> bool {
+        self.generator.exists_wildcard(base_domain)
     }
 
     /// Check if certificate is trusted (CA is trusted = all certs trusted)

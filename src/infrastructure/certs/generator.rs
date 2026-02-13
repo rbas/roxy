@@ -8,6 +8,7 @@ use time::{Duration, OffsetDateTime};
 
 use super::CertError;
 use super::ca::RootCA;
+use super::WILDCARD_CERT_PREFIX;
 use crate::domain::DomainName;
 
 /// Represents a generated certificate with its key pair
@@ -83,6 +84,68 @@ impl CertificateGenerator {
         })
     }
 
+    /// Generate a wildcard certificate for the given base domain, signed by the Root CA.
+    ///
+    /// The certificate includes SANs for:
+    /// - base (myapp.roxy)
+    /// - wildcard (*.myapp.roxy)
+    pub fn generate_wildcard(&self, base_domain: &DomainName) -> Result<Certificate, CertError> {
+        let ca = RootCA::new(self.base_dir.clone());
+
+        // Ensure CA exists
+        if !ca.exists() {
+            return Err(CertError::GenerationError(
+                "Root CA not found. Run 'sudo roxy install' first.".to_string(),
+            ));
+        }
+
+        let base_str = base_domain.as_str();
+
+        // Generate ECDSA P-256 key pair for the domain (per FR-3.1.2)
+        let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| CertError::GenerationError(e.to_string()))?;
+
+        // Configure certificate parameters
+        let mut params = CertificateParams::default();
+
+        // Set distinguished name
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, base_str);
+        dn.push(DnType::OrganizationName, "Roxy Local Development");
+        params.distinguished_name = dn;
+
+        // Set validity period (1 year per FR-3.1.3)
+        let now = OffsetDateTime::now_utc();
+        params.not_before = now;
+        params.not_after = now + Duration::days(365);
+
+        // Add Subject Alternative Names for base + wildcard.
+        let wildcard_str = format!("*.{}", base_str);
+        params.subject_alt_names = vec![
+            SanType::DnsName(base_str.try_into().map_err(|e| {
+                CertError::GenerationError(format!("Invalid domain name for SAN: {}", e))
+            })?),
+            SanType::DnsName(wildcard_str.try_into().map_err(|e| {
+                CertError::GenerationError(format!("Invalid wildcard name for SAN: {}", e))
+            })?),
+        ];
+
+        // Set key usage for server certificate
+        params.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyEncipherment,
+        ];
+
+        // Sign certificate with CA
+        let cert_pem = ca.sign_certificate(params, &key_pair)?;
+
+        Ok(Certificate {
+            domain: format!("{}{}", WILDCARD_CERT_PREFIX, base_str),
+            cert_pem,
+            key_pem: key_pair.serialize_pem(),
+        })
+    }
+
     /// Save a certificate to disk
     pub fn save(&self, cert: &Certificate) -> Result<(), CertError> {
         // Ensure certs directory exists
@@ -151,10 +214,49 @@ impl CertificateGenerator {
         Ok(())
     }
 
+    /// Delete wildcard certificate files for a base domain.
+    pub fn delete_wildcard(&self, base_domain: &DomainName) -> Result<(), CertError> {
+        let base_str = base_domain.as_str();
+        let cert_path = self
+            .certs_dir
+            .join(format!("{}{}.crt", WILDCARD_CERT_PREFIX, base_str));
+        let key_path = self
+            .certs_dir
+            .join(format!("{}{}.key", WILDCARD_CERT_PREFIX, base_str));
+
+        if cert_path.exists() {
+            fs::remove_file(&cert_path).map_err(|e| CertError::DeleteError {
+                path: cert_path,
+                source: e,
+            })?;
+        }
+
+        if key_path.exists() {
+            fs::remove_file(&key_path).map_err(|e| CertError::DeleteError {
+                path: key_path,
+                source: e,
+            })?;
+        }
+
+        Ok(())
+    }
+
     /// Check if certificate exists for a domain
     pub fn exists(&self, domain: &DomainName) -> bool {
         let cert_path = self.certs_dir.join(format!("{}.crt", domain.as_str()));
         let key_path = self.certs_dir.join(format!("{}.key", domain.as_str()));
+        cert_path.exists() && key_path.exists()
+    }
+
+    /// Check if a wildcard certificate exists for a base domain.
+    pub fn exists_wildcard(&self, base_domain: &DomainName) -> bool {
+        let base_str = base_domain.as_str();
+        let cert_path = self
+            .certs_dir
+            .join(format!("{}{}.crt", WILDCARD_CERT_PREFIX, base_str));
+        let key_path = self
+            .certs_dir
+            .join(format!("{}{}.key", WILDCARD_CERT_PREFIX, base_str));
         cert_path.exists() && key_path.exists()
     }
 }
