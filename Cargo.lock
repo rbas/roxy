@@ -929,6 +929,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "clap",
  "ctrlc",
  "http-body-util",
