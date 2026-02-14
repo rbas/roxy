@@ -97,6 +97,19 @@ fn build_upgrade_request(
         req.push_str(&format!("X-Forwarded-For: {}\r\n", xff));
     }
 
+    // Collect any extra hop-by-hop header names declared in the Connection header
+    // (e.g. "Connection: X-Secret, keep-alive") so we can skip them below.
+    // "upgrade" is excluded because the backend needs it for the WebSocket handshake.
+    let dynamic_hop_by_hop: Vec<String> = request
+        .headers()
+        .get_all(header::CONNECTION)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(','))
+        .map(|t| t.trim().to_ascii_lowercase())
+        .filter(|t| !t.is_empty() && t != "upgrade")
+        .collect();
+
     // Copy remaining headers, skipping Host, forwarding headers, and hop-by-hop
     // headers (RFC 7230 §6.1). Connection and Upgrade are kept because the
     // backend needs them for the WebSocket handshake.
@@ -111,6 +124,7 @@ fn build_upgrade_request(
             || name == header::TRAILER
             || name == header::TRANSFER_ENCODING
             || name.as_str() == KEEP_ALIVE
+            || dynamic_hop_by_hop.contains(&name.as_str().to_ascii_lowercase())
         {
             continue;
         }
@@ -305,7 +319,7 @@ fn set_forwarding_headers(
     debug!(
         x_forwarded_host = %host,
         x_forwarded_proto = %scheme,
-        x_forwarded_for = ?client_ip,
+        x_forwarded_for = %client_ip.map(|ip| ip.to_string()).unwrap_or_default(),
         "Forwarding headers set"
     );
 }
@@ -314,16 +328,15 @@ fn set_forwarding_headers(
 ///
 /// Also strips any extra headers listed in the `Connection` header value.
 fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
-    // Collect headers named in the Connection value (e.g. "Connection: X-Custom, keep-alive").
+    // Collect headers named in all Connection values (e.g. "Connection: X-Custom, keep-alive").
+    // Connection can legally appear multiple times (RFC 7230 §6.1).
     let connection_headers: Vec<HeaderName> = headers
-        .get(header::CONNECTION)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            s.split(',')
-                .filter_map(|token| HeaderName::from_bytes(token.trim().as_bytes()).ok())
-                .collect()
-        })
-        .unwrap_or_default();
+        .get_all(header::CONNECTION)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(','))
+        .filter_map(|token| HeaderName::from_bytes(token.trim().as_bytes()).ok())
+        .collect();
 
     headers.remove(header::CONNECTION);
     headers.remove(KEEP_ALIVE);
@@ -418,5 +431,350 @@ pub async fn proxy_request(
                 (StatusCode::BAD_GATEWAY, format!("Proxy error: {}", e)).into_response()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    use axum::http::{HeaderMap, HeaderValue, Request, header};
+
+    use crate::domain::ProxyTarget;
+
+    const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+    // --- Scheme ---
+
+    #[test]
+    fn scheme_as_str_returns_http() {
+        assert_eq!(Scheme::Http.as_str(), "http");
+    }
+
+    #[test]
+    fn scheme_as_str_returns_https() {
+        assert_eq!(Scheme::Https.as_str(), "https");
+    }
+
+    // --- build_xff_value ---
+
+    #[test]
+    fn xff_no_existing_chain() {
+        assert_eq!(build_xff_value(None, LOCALHOST), "127.0.0.1");
+    }
+
+    #[test]
+    fn xff_appends_to_existing_chain() {
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert_eq!(build_xff_value(Some("192.168.1.1"), ip), "192.168.1.1, 10.0.0.1");
+    }
+
+    #[test]
+    fn xff_appends_to_multi_hop_chain() {
+        assert_eq!(
+            build_xff_value(Some("1.1.1.1, 2.2.2.2"), LOCALHOST),
+            "1.1.1.1, 2.2.2.2, 127.0.0.1"
+        );
+    }
+
+    #[test]
+    fn xff_with_ipv6() {
+        let ip = IpAddr::V6(Ipv6Addr::LOCALHOST);
+        assert_eq!(build_xff_value(None, ip), "::1");
+    }
+
+    // --- is_websocket_upgrade ---
+
+    #[test]
+    fn detects_websocket_upgrade() {
+        let req = Request::builder()
+            .header(header::UPGRADE, "websocket")
+            .body(Body::empty())
+            .unwrap();
+        assert!(is_websocket_upgrade(&req));
+    }
+
+    #[test]
+    fn detects_websocket_upgrade_case_insensitive() {
+        let req = Request::builder()
+            .header(header::UPGRADE, "WebSocket")
+            .body(Body::empty())
+            .unwrap();
+        assert!(is_websocket_upgrade(&req));
+    }
+
+    #[test]
+    fn not_websocket_without_upgrade_header() {
+        let req = Request::builder().body(Body::empty()).unwrap();
+        assert!(!is_websocket_upgrade(&req));
+    }
+
+    #[test]
+    fn not_websocket_with_different_upgrade() {
+        let req = Request::builder()
+            .header(header::UPGRADE, "h2c")
+            .body(Body::empty())
+            .unwrap();
+        assert!(!is_websocket_upgrade(&req));
+    }
+
+    // --- set_forwarding_headers ---
+
+    #[test]
+    fn forwarding_headers_sets_all_three() {
+        let mut headers = HeaderMap::new();
+        set_forwarding_headers(&mut headers, "myapp.roxy", "https", Some(LOCALHOST));
+
+        assert_eq!(headers.get(X_FORWARDED_HOST).unwrap(), "myapp.roxy");
+        assert_eq!(headers.get(X_FORWARDED_PROTO).unwrap(), "https");
+        assert_eq!(headers.get(X_FORWARDED_FOR).unwrap(), "127.0.0.1");
+    }
+
+    #[test]
+    fn forwarding_headers_without_client_ip() {
+        let mut headers = HeaderMap::new();
+        set_forwarding_headers(&mut headers, "myapp.roxy", "http", None);
+
+        assert_eq!(headers.get(X_FORWARDED_HOST).unwrap(), "myapp.roxy");
+        assert_eq!(headers.get(X_FORWARDED_PROTO).unwrap(), "http");
+        assert!(headers.get(X_FORWARDED_FOR).is_none());
+    }
+
+    #[test]
+    fn forwarding_headers_appends_to_existing_xff() {
+        let mut headers = HeaderMap::new();
+        headers.insert(X_FORWARDED_FOR, HeaderValue::from_static("10.0.0.1"));
+
+        set_forwarding_headers(&mut headers, "myapp.roxy", "https", Some(LOCALHOST));
+
+        assert_eq!(headers.get(X_FORWARDED_FOR).unwrap(), "10.0.0.1, 127.0.0.1");
+    }
+
+    // --- strip_hop_by_hop_headers ---
+
+    #[test]
+    fn strips_all_standard_hop_by_hop_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONNECTION, HeaderValue::from_static("keep-alive"));
+        headers.insert(KEEP_ALIVE, HeaderValue::from_static("timeout=5"));
+        headers.insert(
+            header::PROXY_AUTHENTICATE,
+            HeaderValue::from_static("Basic"),
+        );
+        headers.insert(
+            header::PROXY_AUTHORIZATION,
+            HeaderValue::from_static("Basic abc"),
+        );
+        headers.insert(header::TE, HeaderValue::from_static("trailers"));
+        headers.insert(header::TRAILER, HeaderValue::from_static("Expires"));
+        headers.insert(
+            header::TRANSFER_ENCODING,
+            HeaderValue::from_static("chunked"),
+        );
+        headers.insert(header::UPGRADE, HeaderValue::from_static("h2c"));
+        // This one should survive
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+
+        strip_hop_by_hop_headers(&mut headers);
+
+        assert!(headers.get(header::CONNECTION).is_none());
+        assert!(headers.get(KEEP_ALIVE).is_none());
+        assert!(headers.get(header::PROXY_AUTHENTICATE).is_none());
+        assert!(headers.get(header::PROXY_AUTHORIZATION).is_none());
+        assert!(headers.get(header::TE).is_none());
+        assert!(headers.get(header::TRAILER).is_none());
+        assert!(headers.get(header::TRANSFER_ENCODING).is_none());
+        assert!(headers.get(header::UPGRADE).is_none());
+        assert_eq!(headers.get(header::CONTENT_TYPE).unwrap(), "text/html");
+    }
+
+    #[test]
+    fn strips_dynamic_headers_named_in_connection() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONNECTION,
+            HeaderValue::from_static("X-Custom, X-Secret"),
+        );
+        headers.insert("x-custom", HeaderValue::from_static("value1"));
+        headers.insert("x-secret", HeaderValue::from_static("value2"));
+        headers.insert("x-keep", HeaderValue::from_static("value3"));
+
+        strip_hop_by_hop_headers(&mut headers);
+
+        assert!(headers.get("x-custom").is_none());
+        assert!(headers.get("x-secret").is_none());
+        assert_eq!(headers.get("x-keep").unwrap(), "value3");
+    }
+
+    #[test]
+    fn strips_dynamic_headers_from_multiple_connection_values() {
+        let mut headers = HeaderMap::new();
+        headers.append(header::CONNECTION, HeaderValue::from_static("X-First"));
+        headers.append(header::CONNECTION, HeaderValue::from_static("X-Second"));
+        headers.insert("x-first", HeaderValue::from_static("one"));
+        headers.insert("x-second", HeaderValue::from_static("two"));
+        headers.insert("x-keep", HeaderValue::from_static("three"));
+
+        strip_hop_by_hop_headers(&mut headers);
+
+        assert!(headers.get("x-first").is_none());
+        assert!(headers.get("x-second").is_none());
+        assert_eq!(headers.get("x-keep").unwrap(), "three");
+    }
+
+    #[test]
+    fn strip_on_empty_headers_is_noop() {
+        let mut headers = HeaderMap::new();
+        strip_hop_by_hop_headers(&mut headers);
+        assert!(headers.is_empty());
+    }
+
+    // --- build_upgrade_request ---
+
+    fn make_target() -> ProxyTarget {
+        ProxyTarget::parse("3000").unwrap()
+    }
+
+    fn ws_request(path: &str) -> Request<Body> {
+        Request::builder()
+            .uri(path)
+            .header(header::HOST, "myapp.roxy")
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade")
+            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[test]
+    fn upgrade_request_contains_forwarding_headers() {
+        let req = ws_request("/ws");
+        let target = make_target();
+
+        let raw = build_upgrade_request(&req, &target, "myapp.roxy", "https", Some(LOCALHOST));
+
+        assert!(raw.contains("X-Forwarded-Host: myapp.roxy\r\n"));
+        assert!(raw.contains("X-Forwarded-Proto: https\r\n"));
+        assert!(raw.contains("X-Forwarded-For: 127.0.0.1\r\n"));
+    }
+
+    #[test]
+    fn upgrade_request_omits_xff_without_client_ip() {
+        let req = ws_request("/ws");
+        let target = make_target();
+
+        let raw = build_upgrade_request(&req, &target, "myapp.roxy", "https", None);
+
+        assert!(raw.contains("X-Forwarded-Host: myapp.roxy\r\n"));
+        assert!(raw.contains("X-Forwarded-Proto: https\r\n"));
+        assert!(!raw.contains("X-Forwarded-For"));
+    }
+
+    #[test]
+    fn upgrade_request_appends_to_existing_xff() {
+        let req = Request::builder()
+            .uri("/ws")
+            .header(header::HOST, "myapp.roxy")
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade")
+            .header(X_FORWARDED_FOR, "10.0.0.1")
+            .body(Body::empty())
+            .unwrap();
+        let target = make_target();
+
+        let raw = build_upgrade_request(&req, &target, "myapp.roxy", "https", Some(LOCALHOST));
+
+        assert!(raw.contains("X-Forwarded-For: 10.0.0.1, 127.0.0.1\r\n"));
+    }
+
+    #[test]
+    fn upgrade_request_does_not_forward_original_host() {
+        let req = ws_request("/ws");
+        let target = make_target();
+
+        let raw = build_upgrade_request(&req, &target, "myapp.roxy", "https", Some(LOCALHOST));
+
+        // Should have the backend Host, not the original
+        assert!(raw.contains("Host: 127.0.0.1:3000\r\n"));
+        // The original Host header should NOT appear as a repeated header.
+        // Count lines starting with "Host:" (not substring matches like "X-Forwarded-Host:").
+        let host_count = raw.lines().filter(|l| l.starts_with("Host:")).count();
+        assert_eq!(host_count, 1);
+    }
+
+    #[test]
+    fn upgrade_request_preserves_connection_and_upgrade() {
+        let req = ws_request("/ws");
+        let target = make_target();
+
+        let raw = build_upgrade_request(&req, &target, "myapp.roxy", "https", None);
+
+        assert!(raw.contains("upgrade: websocket\r\n"));
+        assert!(raw.contains("connection: Upgrade\r\n"));
+    }
+
+    #[test]
+    fn upgrade_request_strips_static_hop_by_hop_headers() {
+        let req = Request::builder()
+            .uri("/ws")
+            .header(header::HOST, "myapp.roxy")
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade")
+            .header(header::PROXY_AUTHORIZATION, "Basic abc")
+            .header(header::TE, "trailers")
+            .header(header::TRAILER, "Expires")
+            .header(header::TRANSFER_ENCODING, "chunked")
+            .header(KEEP_ALIVE, "timeout=5")
+            .body(Body::empty())
+            .unwrap();
+        let target = make_target();
+
+        let raw = build_upgrade_request(&req, &target, "myapp.roxy", "https", None);
+
+        assert!(!raw.contains("proxy-authorization:"));
+        assert!(!raw.contains("te:"));
+        assert!(!raw.contains("trailer:"));
+        assert!(!raw.contains("transfer-encoding:"));
+        assert!(!raw.contains("keep-alive:"));
+    }
+
+    #[test]
+    fn upgrade_request_strips_dynamic_hop_by_hop_from_connection() {
+        let req = Request::builder()
+            .uri("/ws")
+            .header(header::HOST, "myapp.roxy")
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade, X-Secret")
+            .header("x-secret", "leaked")
+            .header("x-safe", "kept")
+            .body(Body::empty())
+            .unwrap();
+        let target = make_target();
+
+        let raw = build_upgrade_request(&req, &target, "myapp.roxy", "https", None);
+
+        assert!(!raw.contains("x-secret:"));
+        assert!(raw.contains("x-safe: kept\r\n"));
+    }
+
+    #[test]
+    fn upgrade_request_includes_query_string() {
+        let req = ws_request("/ws?token=abc");
+        let target = make_target();
+
+        let raw = build_upgrade_request(&req, &target, "myapp.roxy", "https", None);
+
+        assert!(raw.starts_with("GET /ws?token=abc HTTP/1.1\r\n"));
+    }
+
+    #[test]
+    fn upgrade_request_ends_with_blank_line() {
+        let req = ws_request("/ws");
+        let target = make_target();
+
+        let raw = build_upgrade_request(&req, &target, "myapp.roxy", "https", None);
+
+        assert!(raw.ends_with("\r\n\r\n"));
     }
 }
