@@ -16,6 +16,13 @@ use tracing::{debug, info, warn};
 
 use crate::domain::ProxyTarget;
 
+/// Non-standard (but de facto standard) forwarding header names.
+/// The `http` crate only provides constants for IANA-registered headers,
+/// so we define these ourselves to avoid scattered string literals.
+const X_FORWARDED_FOR: &str = "x-forwarded-for";
+const X_FORWARDED_HOST: &str = "x-forwarded-host";
+const X_FORWARDED_PROTO: &str = "x-forwarded-proto";
+
 /// Scheme of the original client request (injected by server layers).
 #[derive(Clone, Copy)]
 pub struct Scheme(pub &'static str);
@@ -63,7 +70,7 @@ fn build_upgrade_request(
     if let Some(ip) = client_ip {
         let xff = match request
             .headers()
-            .get("x-forwarded-for")
+            .get(X_FORWARDED_FOR)
             .and_then(|v| v.to_str().ok())
         {
             Some(existing) => format!("{}, {}", existing, ip),
@@ -75,9 +82,9 @@ fn build_upgrade_request(
     // Copy remaining headers, skipping Host and forwarding headers we already set
     for (name, value) in request.headers() {
         if name == header::HOST
-            || name.as_str() == "x-forwarded-host"
-            || name.as_str() == "x-forwarded-proto"
-            || name.as_str() == "x-forwarded-for"
+            || name.as_str() == X_FORWARDED_HOST
+            || name.as_str() == X_FORWARDED_PROTO
+            || name.as_str() == X_FORWARDED_FOR
         {
             continue;
         }
@@ -244,20 +251,20 @@ fn set_forwarding_headers(
     client_ip: Option<IpAddr>,
 ) {
     if let Ok(value) = HeaderValue::from_str(host) {
-        headers.insert("x-forwarded-host", value);
+        headers.insert(X_FORWARDED_HOST, value);
     }
 
     if let Ok(value) = HeaderValue::from_str(scheme) {
-        headers.insert("x-forwarded-proto", value);
+        headers.insert(X_FORWARDED_PROTO, value);
     }
 
     let xff = if let Some(ip) = client_ip {
-        let value = match headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        let value = match headers.get(X_FORWARDED_FOR).and_then(|v| v.to_str().ok()) {
             Some(existing) => format!("{}, {}", existing, ip),
             None => ip.to_string(),
         };
         if let Ok(hv) = HeaderValue::from_str(&value) {
-            headers.insert("x-forwarded-for", hv);
+            headers.insert(X_FORWARDED_FOR, hv);
         }
         value
     } else {
