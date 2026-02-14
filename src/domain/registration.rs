@@ -1,5 +1,4 @@
-use super::{DomainName, PathPrefix, Route, RouteTarget};
-use serde::{Deserialize, Serialize};
+use super::{DomainName, DomainPattern, PathPrefix, Route, RouteTarget};
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -21,48 +20,58 @@ pub enum RegistrationError {
     CannotRemoveLastRoute,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DomainRegistration {
-    pub domain: DomainName,
-    pub routes: Vec<Route>,
-    pub https_enabled: bool,
-    #[serde(default)]
-    pub wildcard: bool,
+    pattern: DomainPattern,
+    routes: Vec<Route>,
+    https_enabled: bool,
 }
 
 impl DomainRegistration {
-    pub fn new(domain: DomainName, routes: Vec<Route>) -> Self {
+    pub fn new(pattern: DomainPattern, routes: Vec<Route>) -> Self {
         Self {
-            domain,
+            pattern,
             routes,
-            https_enabled: false, // Will be enabled after cert generation
-            wildcard: false,
+            https_enabled: false,
         }
     }
 
-    pub fn new_wildcard(domain: DomainName, routes: Vec<Route>) -> Self {
-        Self {
-            domain,
-            routes,
-            https_enabled: false, // Will be enabled after cert generation
-            wildcard: true,
-        }
+    // --- Accessors ---
+
+    pub fn pattern(&self) -> &DomainPattern {
+        &self.pattern
     }
 
-    pub fn enable_https(&mut self) {
-        self.https_enabled = true;
+    pub fn domain(&self) -> &DomainName {
+        self.pattern.base_domain()
+    }
+
+    pub fn routes(&self) -> &[Route] {
+        &self.routes
+    }
+
+    pub fn is_https_enabled(&self) -> bool {
+        self.https_enabled
+    }
+
+    pub fn is_wildcard(&self) -> bool {
+        self.pattern.is_wildcard()
+    }
+
+    // --- Delegated pattern methods ---
+
+    pub fn display_pattern(&self) -> String {
+        self.pattern.display_pattern()
     }
 
     pub fn config_key(&self) -> String {
-        if self.wildcard {
-            format!("*.{}", self.domain.as_str())
-        } else {
-            self.domain.as_str().to_string()
-        }
+        self.pattern.display_pattern()
     }
 
-    pub fn display_pattern(&self) -> String {
-        self.config_key()
+    // --- Mutators ---
+
+    pub fn enable_https(&mut self) {
+        self.https_enabled = true;
     }
 
     /// Find the best matching route for a request path.
@@ -115,5 +124,194 @@ impl DomainRegistration {
             // Proxy targets don't need validation - the service may not be running yet
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ProxyTarget;
+
+    fn make_pattern(name: &str) -> DomainPattern {
+        DomainPattern::Exact(DomainName::new(name).unwrap())
+    }
+
+    fn proxy_route(path: &str, port: u16) -> Route {
+        Route::new(
+            PathPrefix::new(path).unwrap(),
+            RouteTarget::Proxy(ProxyTarget::parse(&port.to_string()).unwrap()),
+        )
+    }
+
+    fn static_route(path_prefix: &str, dir: PathBuf) -> Route {
+        Route::new(
+            PathPrefix::new(path_prefix).unwrap(),
+            RouteTarget::StaticFiles(dir),
+        )
+    }
+
+    // --- Constructor ---
+
+    #[test]
+    fn new_creates_registration_with_https_disabled() {
+        let reg = DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
+        assert!(!reg.is_https_enabled());
+        assert_eq!(reg.routes().len(), 1);
+        assert_eq!(reg.domain().as_str(), "myapp.roxy");
+    }
+
+    // --- enable_https ---
+
+    #[test]
+    fn enable_https_sets_flag() {
+        let mut reg =
+            DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
+        assert!(!reg.is_https_enabled());
+        reg.enable_https();
+        assert!(reg.is_https_enabled());
+    }
+
+    // --- match_route: longest prefix wins ---
+
+    #[test]
+    fn match_route_returns_exact_match() {
+        let reg = DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
+        let matched = reg.match_route("/").unwrap();
+        assert_eq!(matched.path.as_str(), "/");
+    }
+
+    #[test]
+    fn match_route_longest_prefix_wins() {
+        let reg = DomainRegistration::new(
+            make_pattern("myapp.roxy"),
+            vec![proxy_route("/", 3000), proxy_route("/api", 4000)],
+        );
+
+        // /api/users should match /api (more specific) not /
+        let matched = reg.match_route("/api/users").unwrap();
+        assert_eq!(matched.path.as_str(), "/api");
+
+        // / should match root
+        let matched = reg.match_route("/").unwrap();
+        assert_eq!(matched.path.as_str(), "/");
+    }
+
+    #[test]
+    fn match_route_returns_none_when_no_match() {
+        let reg =
+            DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/api", 4000)]);
+        // /other doesn't match /api prefix
+        assert!(reg.match_route("/other").is_none());
+    }
+
+    // --- add_route ---
+
+    #[test]
+    fn add_route_succeeds_for_new_path() {
+        let mut reg =
+            DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
+        assert!(reg.add_route(proxy_route("/api", 4000)).is_ok());
+        assert_eq!(reg.routes().len(), 2);
+    }
+
+    #[test]
+    fn add_route_fails_for_duplicate_path() {
+        let mut reg =
+            DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
+        let result = reg.add_route(proxy_route("/", 4000));
+        assert!(matches!(result, Err(RegistrationError::RouteExists(_))));
+    }
+
+    // --- remove_route ---
+
+    #[test]
+    fn remove_route_succeeds() {
+        let mut reg = DomainRegistration::new(
+            make_pattern("myapp.roxy"),
+            vec![proxy_route("/", 3000), proxy_route("/api", 4000)],
+        );
+        let path = PathPrefix::new("/api").unwrap();
+        assert!(reg.remove_route(&path).is_ok());
+        assert_eq!(reg.routes().len(), 1);
+    }
+
+    #[test]
+    fn remove_route_fails_for_last_route() {
+        let mut reg =
+            DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
+        let path = PathPrefix::new("/").unwrap();
+        let result = reg.remove_route(&path);
+        assert!(matches!(
+            result,
+            Err(RegistrationError::CannotRemoveLastRoute)
+        ));
+    }
+
+    #[test]
+    fn remove_route_fails_for_nonexistent_path() {
+        let mut reg = DomainRegistration::new(
+            make_pattern("myapp.roxy"),
+            vec![proxy_route("/", 3000), proxy_route("/api", 4000)],
+        );
+        let path = PathPrefix::new("/other").unwrap();
+        let result = reg.remove_route(&path);
+        assert!(matches!(result, Err(RegistrationError::RouteNotFound(_))));
+    }
+
+    // --- validate ---
+
+    #[test]
+    fn validate_passes_for_proxy_routes() {
+        let reg = DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
+        assert!(reg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_passes_for_existing_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let reg = DomainRegistration::new(
+            make_pattern("myapp.roxy"),
+            vec![static_route("/", tmp.path().to_path_buf())],
+        );
+        assert!(reg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_fails_for_nonexistent_path() {
+        let reg = DomainRegistration::new(
+            make_pattern("myapp.roxy"),
+            vec![static_route("/", PathBuf::from("/no/such/path"))],
+        );
+        let result = reg.validate();
+        assert!(matches!(result, Err(RegistrationError::PathNotFound(_))));
+    }
+
+    #[test]
+    fn validate_fails_for_file_not_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("file.txt");
+        std::fs::write(&file_path, "content").unwrap();
+        let reg = DomainRegistration::new(
+            make_pattern("myapp.roxy"),
+            vec![static_route("/", file_path)],
+        );
+        let result = reg.validate();
+        assert!(matches!(result, Err(RegistrationError::NotADirectory(_))));
+    }
+
+    // --- display_pattern / config_key ---
+
+    #[test]
+    fn display_pattern_delegates_to_domain_pattern() {
+        let exact =
+            DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
+        assert_eq!(exact.display_pattern(), "myapp.roxy");
+        assert_eq!(exact.config_key(), "myapp.roxy");
+
+        let wildcard = DomainRegistration::new(
+            DomainPattern::Wildcard(DomainName::new("myapp.roxy").unwrap()),
+            vec![proxy_route("/", 3000)],
+        );
+        assert_eq!(wildcard.display_pattern(), "*.myapp.roxy");
     }
 }

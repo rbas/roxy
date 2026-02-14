@@ -27,26 +27,18 @@ impl Server {
         // Validate config before starting
         config.validate()?;
 
-        let registrations: Vec<_> = config.domains.values().cloned().collect();
+        let registrations = config.registrations();
+
+        // Collect patterns for domains with HTTPS enabled
+        let https_patterns: Vec<_> = registrations
+            .iter()
+            .filter(|d| d.is_https_enabled())
+            .map(|d| d.pattern().clone())
+            .collect();
+
         let state = Arc::new(AppState::new(registrations));
 
-        // Get domains with HTTPS enabled
-        let mut https_exact_domains = Vec::new();
-        let mut https_wildcard_domains = Vec::new();
-        for reg in config.domains.values().filter(|d| d.https_enabled) {
-            if reg.wildcard {
-                https_wildcard_domains.push(reg.domain.clone());
-            } else {
-                https_exact_domains.push(reg.domain.clone());
-            }
-        }
-
-        let tls_acceptor = create_tls_acceptor(
-            &https_exact_domains,
-            &https_wildcard_domains,
-            &paths.certs_dir,
-            &paths.data_dir,
-        )?;
+        let tls_acceptor = create_tls_acceptor(&https_patterns, &paths.certs_dir, &paths.data_dir)?;
 
         // Get LAN IP for DNS responses (DNS server handles source-based resolution)
         let lan_ip = get_lan_ip();

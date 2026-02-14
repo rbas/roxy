@@ -5,21 +5,17 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 use anyhow::{Context, Result};
-use rcgen::{
-    CertificateParams, DistinguishedName, DnType, Issuer, KeyPair, KeyUsagePurpose,
-    PKCS_ECDSA_P256_SHA256, SanType,
-};
+use rcgen::{Issuer, KeyPair, PKCS_ECDSA_P256_SHA256, SanType};
 use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
 use tokio_rustls::TlsAcceptor;
-use time::{Duration, OffsetDateTime};
 use tracing::warn;
 
-use crate::domain::DomainName;
-use crate::infrastructure::certs::WILDCARD_CERT_PREFIX;
+use crate::domain::{DomainName, DomainPattern};
+use crate::infrastructure::certs::generator::{build_ca_cert_params, build_leaf_cert_params};
 
 const ON_DEMAND_CERT_CACHE_MAX: usize = 256;
 
@@ -30,8 +26,8 @@ const ON_DEMAND_CERT_CACHE_MAX: usize = 256;
 /// "Domain Not Registered" page instead of the browser showing a TLS error.
 #[derive(Debug)]
 struct DomainCertResolver {
-    exact_certs: HashMap<String, Arc<CertifiedKey>>,
-    wildcard_certs: Vec<(String, Arc<CertifiedKey>)>,
+    /// All registered certificates, stored with their pattern for matching.
+    certs: Vec<(DomainPattern, Arc<CertifiedKey>)>,
     ca_key_pem: Option<String>,
     on_demand: RwLock<HashMap<String, Arc<CertifiedKey>>>,
 }
@@ -40,24 +36,20 @@ impl ResolvesServerCert for DomainCertResolver {
     fn resolve(&self, client_hello: rustls::server::ClientHello) -> Option<Arc<CertifiedKey>> {
         let hostname = client_hello.server_name()?.to_lowercase();
 
-        // Prefer an exact per-domain cert (generated during `roxy register`).
-        if let Some(cert) = self.exact_certs.get(hostname.as_str()).cloned() {
-            return Some(cert);
-        }
-
-        // Then try cached on-demand certs.
+        // Try cached on-demand certs first (for unregistered but valid .roxy domains).
         if let Some(cert) = self.on_demand.read().ok()?.get(hostname.as_str()).cloned() {
             return Some(cert);
         }
 
-        // Then try wildcard certificates (generated during `roxy register --wildcard`).
-        for (base, cert) in &self.wildcard_certs {
-            if wildcard_cert_covers_hostname(base.as_str(), hostname.as_str()) {
+        // Find the first registered cert whose pattern matches the hostname.
+        // Certs are pre-sorted by specificity (most specific first).
+        for (pattern, cert) in &self.certs {
+            if pattern.matches_hostname(&hostname) {
                 return Some(cert.clone());
             }
         }
 
-        // Finally, generate an on-demand cert for valid `.roxy` hostnames if we
+        // Generate an on-demand cert for valid `.roxy` hostnames if we
         // can read the local CA private key.
         let ca_key_pem = self.ca_key_pem.as_deref()?;
         if DomainName::new(hostname.as_str()).is_err() {
@@ -86,8 +78,7 @@ impl ResolvesServerCert for DomainCertResolver {
 
 /// Load all domain certificates into a single TLS acceptor with SNI
 pub fn create_tls_acceptor(
-    exact_domains: &[DomainName],
-    wildcard_domains: &[DomainName],
+    patterns: &[DomainPattern],
     certs_dir: &Path,
     data_dir: &Path,
 ) -> Result<Option<TlsAcceptor>> {
@@ -99,62 +90,38 @@ pub fn create_tls_acceptor(
         }
     };
 
-    // If we have neither per-domain certificates nor a Root CA to generate on-demand
-    // certificates, HTTPS can't be served.
-    if exact_domains.is_empty() && wildcard_domains.is_empty() && ca_key_pem.is_none() {
+    // If we have neither per-domain certificates nor a Root CA to generate
+    // on-demand certificates, HTTPS can't be served.
+    if patterns.is_empty() && ca_key_pem.is_none() {
         return Ok(None);
     }
 
-    let mut exact_certs = HashMap::new();
+    let mut certs: Vec<(DomainPattern, Arc<CertifiedKey>)> = Vec::new();
 
-    // Load all domain certificates directly from certs_dir
-    for domain in exact_domains {
-        let domain_str = domain.as_str();
-        let cert_path = certs_dir.join(format!("{}.crt", domain_str));
-        let key_path = certs_dir.join(format!("{}.key", domain_str));
-
-        if !cert_path.exists() || !key_path.exists() {
-            anyhow::bail!("No certificate found for {}", domain);
-        }
-
-        let certs = load_certs(&cert_path)?;
-        let key = load_private_key(&key_path)?;
-
-        // Create a signing key using aws-lc-rs (default crypto provider)
-        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key)
-            .context("Failed to create signing key")?;
-
-        let certified_key = Arc::new(CertifiedKey::new(certs, signing_key));
-        exact_certs.insert(domain.as_str().to_string(), certified_key);
-    }
-
-    // Load wildcard certificates (base + *.base SAN) for wildcard registrations.
-    let mut wildcard_certs = Vec::new();
-    for base in wildcard_domains {
-        let base_str = base.as_str();
-        let cert_path = certs_dir.join(format!("{WILDCARD_CERT_PREFIX}{base_str}.crt"));
-        let key_path = certs_dir.join(format!("{WILDCARD_CERT_PREFIX}{base_str}.key"));
+    for pattern in patterns {
+        let stem = pattern.cert_name();
+        let cert_path = certs_dir.join(format!("{}.crt", stem));
+        let key_path = certs_dir.join(format!("{}.key", stem));
 
         if !cert_path.exists() || !key_path.exists() {
-            anyhow::bail!("No wildcard certificate found for *.{}", base);
+            anyhow::bail!("No certificate found for {}", pattern);
         }
 
-        let certs = load_certs(&cert_path)?;
+        let loaded_certs = load_certs(&cert_path)?;
         let key = load_private_key(&key_path)?;
 
         let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key)
             .context("Failed to create signing key")?;
 
-        let certified_key = Arc::new(CertifiedKey::new(certs, signing_key));
-        wildcard_certs.push((base_str.to_string(), certified_key));
+        let certified_key = Arc::new(CertifiedKey::new(loaded_certs, signing_key));
+        certs.push((pattern.clone(), certified_key));
     }
 
-    // Most-specific wildcard wins (longest base domain).
-    wildcard_certs.sort_by_key(|(base, _)| std::cmp::Reverse(base.len()));
+    // Most-specific pattern wins (longest base domain).
+    certs.sort_by_key(|(p, _)| std::cmp::Reverse(p.specificity()));
 
     let resolver = Arc::new(DomainCertResolver {
-        exact_certs,
-        wildcard_certs,
+        certs,
         ca_key_pem,
         on_demand: RwLock::new(HashMap::new()),
     });
@@ -164,24 +131,6 @@ pub fn create_tls_acceptor(
         .with_cert_resolver(resolver);
 
     Ok(Some(TlsAcceptor::from(Arc::new(config))))
-}
-
-fn wildcard_cert_covers_hostname(base: &str, hostname: &str) -> bool {
-    // Our wildcard certs include both:
-    // - base (myapp.roxy)
-    // - *.base (covers one-label subdomains like blog.myapp.roxy)
-    if hostname == base {
-        return true;
-    }
-
-    let suffix = format!(".{}", base);
-    if !hostname.ends_with(&suffix) {
-        return false;
-    }
-
-    // Ensure only one label before the base.
-    let prefix = &hostname[..hostname.len() - suffix.len()];
-    !prefix.is_empty() && !prefix.contains('.')
 }
 
 fn load_ca_key_pem(data_dir: &Path) -> Result<Option<String>> {
@@ -196,41 +145,18 @@ fn load_ca_key_pem(data_dir: &Path) -> Result<Option<String>> {
 }
 
 fn generate_on_demand_certified_key(hostname: &str, ca_key_pem: &str) -> Result<Arc<CertifiedKey>> {
-    // Generate a leaf keypair for this hostname.
     let leaf_key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
         .context("Failed to generate leaf key pair")?;
 
-    // Configure certificate parameters (aligned with infrastructure/certs/generator.rs).
-    let mut params = CertificateParams::default();
-    let mut dn = DistinguishedName::new();
-    dn.push(DnType::CommonName, hostname);
-    dn.push(DnType::OrganizationName, "Roxy Local Development");
-    params.distinguished_name = dn;
+    let san = SanType::DnsName(
+        hostname
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("Invalid hostname for SAN: {}", e))?,
+    );
+    let params = build_leaf_cert_params(hostname, vec![san]);
 
-    let now = OffsetDateTime::now_utc();
-    params.not_before = now;
-    params.not_after = now + Duration::days(365);
-
-    params.subject_alt_names = vec![SanType::DnsName(hostname.try_into().map_err(|e| {
-        anyhow::anyhow!("Invalid hostname for SAN: {}", e)
-    })?)];
-
-    params.key_usages = vec![
-        KeyUsagePurpose::DigitalSignature,
-        KeyUsagePurpose::KeyEncipherment,
-    ];
-
-    // Build a CA issuer using the on-disk Root CA private key.
     let ca_key_pair = KeyPair::from_pem(ca_key_pem).context("Failed to parse CA key")?;
-    let mut ca_params = CertificateParams::default();
-    let mut ca_dn = DistinguishedName::new();
-    ca_dn.push(DnType::CommonName, "Roxy Local Development CA");
-    ca_dn.push(DnType::OrganizationName, "Roxy");
-    ca_params.distinguished_name = ca_dn;
-    ca_params.not_before = now;
-    ca_params.not_after = now + Duration::days(3650);
-    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-
+    let ca_params = build_ca_cert_params();
     let issuer = Issuer::from_params(&ca_params, &ca_key_pair);
 
     let cert = params

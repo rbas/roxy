@@ -1,7 +1,7 @@
 use super::ca::RootCA;
 use super::trust_store::get_trust_store;
 use super::{CertError, CertificateGenerator};
-use crate::domain::DomainName;
+use crate::domain::DomainPattern;
 use crate::infrastructure::paths::RoxyPaths;
 
 /// High-level service for certificate operations
@@ -45,69 +45,34 @@ impl CertificateService {
         trust_store.is_ca_trusted()
     }
 
-    /// Generate a certificate for a domain (signed by the Root CA)
-    /// The certificate is automatically trusted because the CA is trusted
-    pub fn create_and_install(&self, domain: &DomainName) -> Result<(), CertError> {
-        // Ensure CA exists
-        if !self.ca.exists() {
-            return Err(CertError::GenerationError(
-                "Root CA not found. Run 'sudo roxy install' first.".to_string(),
-            ));
-        }
-
-        // Generate certificate (signed by CA)
-        let cert = self.generator.generate(domain)?;
-
-        // Save to disk (no need to add to trust store - CA is already trusted)
-        self.generator.save(&cert)?;
-
-        Ok(())
-    }
-
-    /// Generate a wildcard certificate for a base domain (signed by the Root CA).
+    /// Generate a certificate for a domain pattern (signed by the Root CA).
     ///
-    /// The certificate includes SANs for base + *.base.
-    pub fn create_and_install_wildcard(&self, base_domain: &DomainName) -> Result<(), CertError> {
-        // Ensure CA exists
+    /// For exact patterns, generates a single-domain cert.
+    /// For wildcard patterns, generates a cert with SANs for base + *.base.
+    pub fn create_and_install(&self, pattern: &DomainPattern) -> Result<(), CertError> {
         if !self.ca.exists() {
             return Err(CertError::GenerationError(
                 "Root CA not found. Run 'sudo roxy install' first.".to_string(),
             ));
         }
 
-        let cert = self.generator.generate_wildcard(base_domain)?;
+        let cert = self.generator.generate(pattern)?;
         self.generator.save(&cert)?;
         Ok(())
     }
 
-    /// Remove certificate files for a domain
-    /// Note: No trust store removal needed since we use CA-based trust
-    pub fn remove(&self, domain: &DomainName) -> Result<(), CertError> {
-        // Delete certificate files
-        self.generator.delete(domain)?;
-
-        Ok(())
+    /// Remove certificate files for a domain pattern.
+    pub fn remove(&self, pattern: &DomainPattern) -> Result<(), CertError> {
+        self.generator.delete(pattern)
     }
 
-    /// Remove wildcard certificate files for a base domain.
-    pub fn remove_wildcard(&self, base_domain: &DomainName) -> Result<(), CertError> {
-        self.generator.delete_wildcard(base_domain)?;
-        Ok(())
-    }
-
-    /// Check if certificate exists for a domain
-    pub fn exists(&self, domain: &DomainName) -> bool {
-        self.generator.exists(domain)
-    }
-
-    /// Check if a wildcard certificate exists for a base domain
-    pub fn exists_wildcard(&self, base_domain: &DomainName) -> bool {
-        self.generator.exists_wildcard(base_domain)
+    /// Check if certificate exists for a domain pattern.
+    pub fn exists(&self, pattern: &DomainPattern) -> bool {
+        self.generator.exists(pattern)
     }
 
     /// Check if certificate is trusted (CA is trusted = all certs trusted)
-    pub fn is_trusted(&self, _domain: &DomainName) -> Result<bool, CertError> {
-        // If CA is trusted, all certs signed by it are trusted
+    pub fn is_trusted(&self) -> Result<bool, CertError> {
         self.is_ca_installed()
     }
 

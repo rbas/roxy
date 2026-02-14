@@ -1,8 +1,10 @@
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
-use crate::domain::{DomainName, DomainRegistration, Route};
+use crate::application::StepOutcome;
+use crate::application::register_domain::RegisterDomain;
+use crate::domain::{DomainPattern, Route};
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::paths::RoxyPaths;
@@ -14,13 +16,7 @@ pub fn execute(
     config_path: &Path,
     paths: &RoxyPaths,
 ) -> Result<()> {
-    // Validate domain name
-    let domain = DomainName::new(&domain)?;
-
-    // Parse routes
-    if routes.is_empty() {
-        bail!("At least one route is required. Use --route \"/=PORT\" or --route \"/=PATH\"");
-    }
+    let pattern = DomainPattern::from_name(&domain, wildcard)?;
 
     let parsed_routes: Vec<Route> = routes
         .iter()
@@ -30,77 +26,43 @@ pub fn execute(
 
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let cert_service = CertificateService::new(paths);
+    let use_case = RegisterDomain::new(&config_store, &cert_service);
 
-    // Check if already registered
-    let existing = if wildcard {
-        config_store.get_wildcard_domain(&domain)?
-    } else {
-        config_store.get_domain(&domain)?
-    };
-    if existing.is_some() {
-        let pattern = if wildcard {
-            format!("*.{}", domain.as_str())
-        } else {
-            domain.as_str().to_string()
-        };
-        bail!(
-            "Domain '{}' is already registered. Use 'roxy unregister {}{}' first.",
-            pattern,
-            domain,
-            if wildcard { " --wildcard" } else { "" }
-        );
-    }
-
-    // Create registration
-    let mut registration = if wildcard {
-        DomainRegistration::new_wildcard(domain.clone(), parsed_routes)
-    } else {
-        DomainRegistration::new(domain.clone(), parsed_routes)
-    };
-
-    // Generate and install certificate
     println!(
         "Generating SSL certificate for {}...",
-        registration.display_pattern()
+        pattern.display_pattern()
     );
-    let cert_result = if wildcard {
-        cert_service.create_and_install_wildcard(&domain)
-    } else {
-        cert_service.create_and_install(&domain)
-    };
-    match cert_result {
-        Ok(()) => {
-            registration.enable_https();
-            println!("  Certificate installed and trusted.");
-        }
-        Err(e) => {
-            // Certificate generation failed - warn but continue
-            eprintln!("  Warning: Failed to generate certificate: {}", e);
-            eprintln!("  HTTPS will not be available for this domain.");
+
+    let result = use_case.execute(pattern, parsed_routes)?;
+
+    match &result.cert_outcome {
+        StepOutcome::Success(msg) => println!("  {}", msg),
+        StepOutcome::Warning(msg) => {
+            eprintln!("  {}", msg);
             eprintln!(
                 "  Run 'sudo roxy register {}{}' to enable HTTPS.",
-                domain,
+                result.registration.domain(),
                 if wildcard { " --wildcard" } else { "" }
             );
         }
+        StepOutcome::Skipped(msg) => println!("  {}", msg),
     }
 
-    // Save to config
-    config_store.add_domain(registration.clone())?;
-
-    println!("\nRegistered domain: {}", registration.display_pattern());
+    println!(
+        "\nRegistered domain: {}",
+        result.registration.display_pattern()
+    );
     println!("  Routes:");
-    for route in &registration.routes {
+    for route in result.registration.routes() {
         println!("    {} -> {}", route.path, route.target);
     }
-    let https_enabled = if wildcard {
-        cert_service.exists_wildcard(&domain)
-    } else {
-        cert_service.exists(&domain)
-    };
     println!(
         "  HTTPS: {}",
-        if https_enabled { "enabled" } else { "disabled" }
+        if result.registration.is_https_enabled() {
+            "enabled"
+        } else {
+            "disabled"
+        }
     );
     println!("\nStart the proxy with: roxy start");
 

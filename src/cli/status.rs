@@ -62,17 +62,13 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
     let domains = config_store.list_domains()?;
     if !domains.is_empty() {
         println!("\nRegistered domains: {}", domains.len());
-        for domain in domains {
-            let scheme = if domain.https_enabled {
+        for reg in domains {
+            let scheme = if reg.is_https_enabled() {
                 "https"
             } else {
                 "http"
             };
-            if domain.wildcard {
-                println!("  {}://{} (wildcard)", scheme, domain.domain);
-            } else {
-                println!("  {}://{}", scheme, domain.domain);
-            }
+            println!("  {}://{}", scheme, reg.display_pattern());
         }
     }
 

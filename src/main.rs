@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod application;
 mod cli;
 mod daemon;
 mod domain;
@@ -198,7 +199,9 @@ fn main() -> Result<()> {
                 domain,
                 path,
             } => cli::route::remove(domain, wildcard, path, config_path),
-            RouteCommands::List { wildcard, domain } => cli::route::list(domain, wildcard, config_path),
+            RouteCommands::List { wildcard, domain } => {
+                cli::route::list(domain, wildcard, config_path)
+            }
         },
         Commands::List => cli::list::execute(config_path, &paths),
         Commands::Start { foreground } => {

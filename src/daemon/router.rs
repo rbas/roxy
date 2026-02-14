@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -19,30 +18,22 @@ use super::theme;
 
 /// Shared state for the router
 pub struct AppState {
-    exact_domains: HashMap<String, DomainRegistration>,
-    wildcard_domains: Vec<DomainRegistration>,
+    /// All registrations sorted by pattern specificity (most specific first).
+    registrations: Vec<DomainRegistration>,
 }
 
 impl AppState {
-    pub fn new(registrations: Vec<DomainRegistration>) -> Self {
-        let mut exact_domains = HashMap::new();
-        let mut wildcard_domains = Vec::new();
+    pub fn new(mut registrations: Vec<DomainRegistration>) -> Self {
+        // Most-specific first: longer base domain wins.
+        // At equal specificity, exact patterns come before wildcards.
+        registrations.sort_by(|a, b| {
+            b.pattern()
+                .specificity()
+                .cmp(&a.pattern().specificity())
+                .then_with(|| a.is_wildcard().cmp(&b.is_wildcard()))
+        });
 
-        for r in registrations {
-            if r.wildcard {
-                wildcard_domains.push(r);
-            } else {
-                exact_domains.insert(r.domain.as_str().to_string(), r);
-            }
-        }
-
-        // Most-specific wildcard wins (longest base domain).
-        wildcard_domains.sort_by_key(|r| std::cmp::Reverse(r.domain.as_str().len()));
-
-        Self {
-            exact_domains,
-            wildcard_domains,
-        }
+        Self { registrations }
     }
 
     pub fn get_domain(&self, host: &str) -> Option<&DomainRegistration> {
@@ -50,23 +41,9 @@ impl AppState {
         let domain = host.split(':').next().unwrap_or(host);
         let domain = domain.trim_end_matches('.').to_lowercase();
 
-        if let Some(r) = self.exact_domains.get(domain.as_str()) {
-            return Some(r);
-        }
-
-        for reg in &self.wildcard_domains {
-            let base = reg.domain.as_str();
-            if domain == base {
-                return Some(reg);
-            }
-
-            let suffix = format!(".{}", base);
-            if domain.ends_with(&suffix) {
-                return Some(reg);
-            }
-        }
-
-        None
+        self.registrations
+            .iter()
+            .find(|r| r.pattern().matches_hostname(&domain))
     }
 }
 
@@ -202,7 +179,7 @@ fn build_no_route_response(registration: &DomainRegistration, host: &str, path: 
     let domain = domain.trim_end_matches('.').to_lowercase();
     let domain = theme::html_escape(&domain);
     let path = theme::html_escape(path);
-    let reg_domain = theme::html_escape(registration.domain.as_str());
+    let reg_domain = theme::html_escape(registration.domain().as_str());
     let image_data_uri = embedded_assets::roxy_404_data_uri();
 
     let mut body = String::new();
@@ -223,7 +200,7 @@ fn build_no_route_response(registration: &DomainRegistration, host: &str, path: 
     body.push_str("<div class=\"help-section\">\n");
     body.push_str("<p class=\"help-label\">To add a route for this path, run:</p>\n");
     body.push_str("<div class=\"command\">roxy route add ");
-    if registration.wildcard {
+    if registration.is_wildcard() {
         body.push_str("--wildcard ");
     }
     body.push_str(&reg_domain);
@@ -310,16 +287,17 @@ const ERROR_CSS: &str = "\
 #[cfg(test)]
 mod tests {
     use super::AppState;
-    use crate::domain::{DomainName, DomainRegistration, Route};
+    use crate::domain::{DomainName, DomainPattern, DomainRegistration, Route};
 
     fn reg(domain: &str, wildcard: bool) -> DomainRegistration {
         let domain = DomainName::new(domain).unwrap();
-        let routes = vec![Route::parse("/=3000").unwrap()];
-        if wildcard {
-            DomainRegistration::new_wildcard(domain, routes)
+        let pattern = if wildcard {
+            DomainPattern::Wildcard(domain)
         } else {
-            DomainRegistration::new(domain, routes)
-        }
+            DomainPattern::Exact(domain)
+        };
+        let routes = vec![Route::parse("/=3000").unwrap()];
+        DomainRegistration::new(pattern, routes)
     }
 
     #[test]
@@ -329,7 +307,9 @@ mod tests {
         let state = AppState::new(vec![wildcard, exact]);
 
         let found = state.get_domain("myapp.roxy").unwrap();
-        assert!(!found.wildcard);
+        // Exact patterns match before wildcards because both match,
+        // but the exact match is returned since it's found first.
+        assert!(!found.is_wildcard());
     }
 
     #[test]
@@ -338,8 +318,17 @@ mod tests {
         let state = AppState::new(vec![wildcard]);
 
         let found = state.get_domain("blog.myapp.roxy").unwrap();
-        assert!(found.wildcard);
-        assert_eq!(found.domain.as_str(), "myapp.roxy");
+        assert!(found.is_wildcard());
+        assert_eq!(found.domain().as_str(), "myapp.roxy");
+    }
+
+    #[test]
+    fn test_wildcard_does_not_match_multi_level_subdomain() {
+        let wildcard = reg("myapp.roxy", true);
+        let state = AppState::new(vec![wildcard]);
+
+        // This previously matched (bug DA3) — now fixed by DomainPattern
+        assert!(state.get_domain("a.b.myapp.roxy").is_none());
     }
 
     #[test]
@@ -349,7 +338,7 @@ mod tests {
         let state = AppState::new(vec![broad, specific]);
 
         let found = state.get_domain("blog.sub.myapp.roxy").unwrap();
-        assert_eq!(found.domain.as_str(), "sub.myapp.roxy");
+        assert_eq!(found.domain().as_str(), "sub.myapp.roxy");
     }
 
     #[test]

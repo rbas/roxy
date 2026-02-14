@@ -8,14 +8,58 @@ use time::{Duration, OffsetDateTime};
 
 use super::CertError;
 use super::ca::RootCA;
-use super::WILDCARD_CERT_PREFIX;
-use crate::domain::DomainName;
+use crate::domain::DomainPattern;
 
 /// Represents a generated certificate with its key pair
 pub struct Certificate {
-    pub domain: String,
+    /// File stem used for saving (e.g. "myapp.roxy" or "__wildcard__.myapp.roxy")
+    pub file_stem: String,
     pub cert_pem: String,
     pub key_pem: String,
+}
+
+/// Build certificate parameters for a domain leaf certificate.
+///
+/// Sets up the Distinguished Name, 1-year validity, key usage for
+/// server authentication, and the given Subject Alternative Names.
+pub(crate) fn build_leaf_cert_params(common_name: &str, sans: Vec<SanType>) -> CertificateParams {
+    let mut params = CertificateParams::default();
+
+    let mut dn = DistinguishedName::new();
+    dn.push(DnType::CommonName, common_name);
+    dn.push(DnType::OrganizationName, "Roxy Local Development");
+    params.distinguished_name = dn;
+
+    let now = OffsetDateTime::now_utc();
+    params.not_before = now;
+    params.not_after = now + Duration::days(365);
+
+    params.subject_alt_names = sans;
+
+    params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
+
+    params
+}
+
+/// Build the standard Roxy CA certificate parameters.
+pub(crate) fn build_ca_cert_params() -> CertificateParams {
+    let mut params = CertificateParams::default();
+
+    let mut dn = DistinguishedName::new();
+    dn.push(DnType::CommonName, "Roxy Local Development CA");
+    dn.push(DnType::OrganizationName, "Roxy");
+    params.distinguished_name = dn;
+
+    let now = OffsetDateTime::now_utc();
+    params.not_before = now;
+    params.not_after = now + Duration::days(3650);
+
+    params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+
+    params
 }
 
 pub struct CertificateGenerator {
@@ -32,115 +76,31 @@ impl CertificateGenerator {
         }
     }
 
-    /// Generate a new certificate for the given domain, signed by the Root CA
-    pub fn generate(&self, domain: &DomainName) -> Result<Certificate, CertError> {
-        let ca = RootCA::new(self.base_dir.clone());
-
-        // Ensure CA exists
-        if !ca.exists() {
-            return Err(CertError::GenerationError(
-                "Root CA not found. Run 'sudo roxy install' first.".to_string(),
-            ));
-        }
-
-        let domain_str = domain.as_str();
-
-        // Generate ECDSA P-256 key pair for the domain (per FR-3.1.2)
-        let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
-            .map_err(|e| CertError::GenerationError(e.to_string()))?;
-
-        // Configure certificate parameters
-        let mut params = CertificateParams::default();
-
-        // Set distinguished name
-        let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, domain_str);
-        dn.push(DnType::OrganizationName, "Roxy Local Development");
-        params.distinguished_name = dn;
-
-        // Set validity period (1 year per FR-3.1.3)
-        let now = OffsetDateTime::now_utc();
-        params.not_before = now;
-        params.not_after = now + Duration::days(365);
-
-        // Add Subject Alternative Name (FR-3.1.4)
-        params.subject_alt_names = vec![SanType::DnsName(domain_str.try_into().map_err(|e| {
-            CertError::GenerationError(format!("Invalid domain name for SAN: {}", e))
-        })?)];
-
-        // Set key usage for server certificate
-        params.key_usages = vec![
-            KeyUsagePurpose::DigitalSignature,
-            KeyUsagePurpose::KeyEncipherment,
-        ];
-
-        // Sign certificate with CA
-        let cert_pem = ca.sign_certificate(params, &key_pair)?;
-
-        Ok(Certificate {
-            domain: domain_str.to_string(),
-            cert_pem,
-            key_pem: key_pair.serialize_pem(),
-        })
-    }
-
-    /// Generate a wildcard certificate for the given base domain, signed by the Root CA.
+    /// Generate a certificate for the given domain pattern, signed by the Root CA.
     ///
-    /// The certificate includes SANs for:
-    /// - base (myapp.roxy)
-    /// - wildcard (*.myapp.roxy)
-    pub fn generate_wildcard(&self, base_domain: &DomainName) -> Result<Certificate, CertError> {
+    /// For exact patterns, generates a single-domain cert.
+    /// For wildcard patterns, generates a cert with SANs for base + *.base.
+    pub fn generate(&self, pattern: &DomainPattern) -> Result<Certificate, CertError> {
         let ca = RootCA::new(self.base_dir.clone());
 
-        // Ensure CA exists
         if !ca.exists() {
             return Err(CertError::GenerationError(
                 "Root CA not found. Run 'sudo roxy install' first.".to_string(),
             ));
         }
 
-        let base_str = base_domain.as_str();
-
-        // Generate ECDSA P-256 key pair for the domain (per FR-3.1.2)
+        // Generate ECDSA P-256 key pair
         let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
             .map_err(|e| CertError::GenerationError(e.to_string()))?;
 
-        // Configure certificate parameters
-        let mut params = CertificateParams::default();
-
-        // Set distinguished name
-        let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, base_str);
-        dn.push(DnType::OrganizationName, "Roxy Local Development");
-        params.distinguished_name = dn;
-
-        // Set validity period (1 year per FR-3.1.3)
-        let now = OffsetDateTime::now_utc();
-        params.not_before = now;
-        params.not_after = now + Duration::days(365);
-
-        // Add Subject Alternative Names for base + wildcard.
-        let wildcard_str = format!("*.{}", base_str);
-        params.subject_alt_names = vec![
-            SanType::DnsName(base_str.try_into().map_err(|e| {
-                CertError::GenerationError(format!("Invalid domain name for SAN: {}", e))
-            })?),
-            SanType::DnsName(wildcard_str.try_into().map_err(|e| {
-                CertError::GenerationError(format!("Invalid wildcard name for SAN: {}", e))
-            })?),
-        ];
-
-        // Set key usage for server certificate
-        params.key_usages = vec![
-            KeyUsagePurpose::DigitalSignature,
-            KeyUsagePurpose::KeyEncipherment,
-        ];
+        let sans = build_sans(pattern)?;
+        let params = build_leaf_cert_params(pattern.base_domain().as_str(), sans);
 
         // Sign certificate with CA
         let cert_pem = ca.sign_certificate(params, &key_pair)?;
 
         Ok(Certificate {
-            domain: format!("{}{}", WILDCARD_CERT_PREFIX, base_str),
+            file_stem: pattern.cert_name(),
             cert_pem,
             key_pem: key_pair.serialize_pem(),
         })
@@ -154,8 +114,8 @@ impl CertificateGenerator {
             source: e,
         })?;
 
-        let cert_path = self.certs_dir.join(format!("{}.crt", cert.domain));
-        let key_path = self.certs_dir.join(format!("{}.key", cert.domain));
+        let cert_path = self.certs_dir.join(format!("{}.crt", cert.file_stem));
+        let key_path = self.certs_dir.join(format!("{}.key", cert.file_stem));
 
         // Write certificate
         fs::write(&cert_path, &cert.cert_pem).map_err(|e| CertError::WriteError {
@@ -189,40 +149,11 @@ impl CertificateGenerator {
         Ok(())
     }
 
-    /// Delete certificate files for a domain
-    pub fn delete(&self, domain: &DomainName) -> Result<(), CertError> {
-        let domain_str = domain.as_str();
-        let cert_path = self.certs_dir.join(format!("{}.crt", domain_str));
-        let key_path = self.certs_dir.join(format!("{}.key", domain_str));
-
-        // Remove certificate file if exists
-        if cert_path.exists() {
-            fs::remove_file(&cert_path).map_err(|e| CertError::DeleteError {
-                path: cert_path,
-                source: e,
-            })?;
-        }
-
-        // Remove key file if exists
-        if key_path.exists() {
-            fs::remove_file(&key_path).map_err(|e| CertError::DeleteError {
-                path: key_path,
-                source: e,
-            })?;
-        }
-
-        Ok(())
-    }
-
-    /// Delete wildcard certificate files for a base domain.
-    pub fn delete_wildcard(&self, base_domain: &DomainName) -> Result<(), CertError> {
-        let base_str = base_domain.as_str();
-        let cert_path = self
-            .certs_dir
-            .join(format!("{}{}.crt", WILDCARD_CERT_PREFIX, base_str));
-        let key_path = self
-            .certs_dir
-            .join(format!("{}{}.key", WILDCARD_CERT_PREFIX, base_str));
+    /// Delete certificate files for a domain pattern
+    pub fn delete(&self, pattern: &DomainPattern) -> Result<(), CertError> {
+        let stem = pattern.cert_name();
+        let cert_path = self.certs_dir.join(format!("{}.crt", stem));
+        let key_path = self.certs_dir.join(format!("{}.key", stem));
 
         if cert_path.exists() {
             fs::remove_file(&cert_path).map_err(|e| CertError::DeleteError {
@@ -241,49 +172,59 @@ impl CertificateGenerator {
         Ok(())
     }
 
-    /// Check if certificate exists for a domain
-    pub fn exists(&self, domain: &DomainName) -> bool {
-        let cert_path = self.certs_dir.join(format!("{}.crt", domain.as_str()));
-        let key_path = self.certs_dir.join(format!("{}.key", domain.as_str()));
+    /// Check if certificate exists for a domain pattern
+    pub fn exists(&self, pattern: &DomainPattern) -> bool {
+        let stem = pattern.cert_name();
+        let cert_path = self.certs_dir.join(format!("{}.crt", stem));
+        let key_path = self.certs_dir.join(format!("{}.key", stem));
         cert_path.exists() && key_path.exists()
     }
+}
 
-    /// Check if a wildcard certificate exists for a base domain.
-    pub fn exists_wildcard(&self, base_domain: &DomainName) -> bool {
-        let base_str = base_domain.as_str();
-        let cert_path = self
-            .certs_dir
-            .join(format!("{}{}.crt", WILDCARD_CERT_PREFIX, base_str));
-        let key_path = self
-            .certs_dir
-            .join(format!("{}{}.key", WILDCARD_CERT_PREFIX, base_str));
-        cert_path.exists() && key_path.exists()
+/// Build Subject Alternative Names for the given pattern.
+fn build_sans(pattern: &DomainPattern) -> Result<Vec<SanType>, CertError> {
+    let base_str = pattern.base_domain().as_str();
+
+    let base_san =
+        SanType::DnsName(base_str.try_into().map_err(|e| {
+            CertError::GenerationError(format!("Invalid domain name for SAN: {}", e))
+        })?);
+
+    match pattern {
+        DomainPattern::Exact(_) => Ok(vec![base_san]),
+        DomainPattern::Wildcard(_) => {
+            let wildcard_str = format!("*.{}", base_str);
+            let wildcard_san = SanType::DnsName(wildcard_str.try_into().map_err(|e| {
+                CertError::GenerationError(format!("Invalid wildcard name for SAN: {}", e))
+            })?);
+            Ok(vec![base_san, wildcard_san])
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DomainName;
+    use crate::infrastructure::certs::ca::RootCA;
     use tempfile::TempDir;
 
     #[test]
     fn test_certificate_generation() {
-        // Create an isolated test environment
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let base_dir = temp_dir.path().to_path_buf();
         let certs_dir = base_dir.join("certs");
 
-        // Generate a test CA in the temp directory
         let ca = RootCA::new(base_dir.clone());
         ca.generate().expect("Failed to generate test CA");
 
-        // Now test certificate generation
         let domain = DomainName::new("test.roxy").unwrap();
+        let pattern = DomainPattern::Exact(domain);
         let generator = CertificateGenerator::new(base_dir, certs_dir);
 
-        let cert = generator.generate(&domain).unwrap();
+        let cert = generator.generate(&pattern).unwrap();
 
-        assert_eq!(cert.domain, "test.roxy");
+        assert_eq!(cert.file_stem, "test.roxy");
         assert!(cert.cert_pem.contains("BEGIN CERTIFICATE"));
         assert!(cert.key_pem.contains("BEGIN PRIVATE KEY"));
     }

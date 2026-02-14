@@ -6,6 +6,20 @@ Roxy is a local development proxy tool written in Rust that enables developers t
 
 **Philosophy**: Pragmatic, idiomatic Rust. Build the simplest thing that works. YAGNI principles apply throughout.
 
+## Rust Skills (AI)
+
+This repo vendors `rust-skills` (skills-only, no MCP) at `.rust-skills/skills/`.
+
+Local setup links those skills into:
+- `~/.codex/skills/` (Codex)
+- `~/.claude/skills/` (Claude Code)
+
+When working on Rust tasks, prefer:
+- Invoke `rust-router` first for Rust questions/errors/design.
+- Then follow the routed skill (`m01-*`..`m07-*`, `m09-*`..`m15-*`, `domain-*`).
+- Use `unsafe-checker` for any unsafe/FFI review.
+
+
 ## Core Principles
 
 ### 1. Idiomatic Rust
