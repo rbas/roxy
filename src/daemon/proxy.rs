@@ -467,7 +467,10 @@ mod tests {
     #[test]
     fn xff_appends_to_existing_chain() {
         let ip: IpAddr = "10.0.0.1".parse().unwrap();
-        assert_eq!(build_xff_value(Some("192.168.1.1"), ip), "192.168.1.1, 10.0.0.1");
+        assert_eq!(
+            build_xff_value(Some("192.168.1.1"), ip),
+            "192.168.1.1, 10.0.0.1"
+        );
     }
 
     #[test]
