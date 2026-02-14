@@ -1,9 +1,10 @@
+use std::net::IpAddr;
 use std::time::Instant;
 
 use axum::{
     body::Body,
     extract::Request,
-    http::{StatusCode, Uri, header},
+    http::{HeaderMap, StatusCode, Uri, header, header::HeaderName, header::HeaderValue},
     response::{IntoResponse, Response},
 };
 use hyper_util::client::legacy::Client;
@@ -14,6 +15,14 @@ use tokio::net::TcpStream;
 use tracing::{debug, info, warn};
 
 use crate::domain::ProxyTarget;
+
+/// Scheme of the original client request (injected by server layers).
+#[derive(Clone, Copy)]
+pub struct Scheme(pub &'static str);
+
+/// Client IP address (injected by server layers).
+#[derive(Clone, Copy)]
+pub struct ClientAddr(pub IpAddr);
 
 /// Check if request is a WebSocket upgrade
 fn is_websocket_upgrade(request: &Request) -> bool {
@@ -26,7 +35,13 @@ fn is_websocket_upgrade(request: &Request) -> bool {
 }
 
 /// Build HTTP upgrade request string to send to backend
-fn build_upgrade_request(request: &Request, target: &ProxyTarget) -> String {
+fn build_upgrade_request(
+    request: &Request,
+    target: &ProxyTarget,
+    host: &str,
+    scheme: &str,
+    client_ip: Option<IpAddr>,
+) -> String {
     let path = request.uri().path();
     let query = request
         .uri()
@@ -42,10 +57,31 @@ fn build_upgrade_request(request: &Request, target: &ProxyTarget) -> String {
         target.port()
     );
 
-    for (name, value) in request.headers() {
-        if name != header::HOST
-            && let Ok(v) = value.to_str()
+    // Forwarding headers
+    req.push_str(&format!("X-Forwarded-Host: {}\r\n", host));
+    req.push_str(&format!("X-Forwarded-Proto: {}\r\n", scheme));
+    if let Some(ip) = client_ip {
+        let xff = match request
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
         {
+            Some(existing) => format!("{}, {}", existing, ip),
+            None => ip.to_string(),
+        };
+        req.push_str(&format!("X-Forwarded-For: {}\r\n", xff));
+    }
+
+    // Copy remaining headers, skipping Host and forwarding headers we already set
+    for (name, value) in request.headers() {
+        if name == header::HOST
+            || name.as_str() == "x-forwarded-host"
+            || name.as_str() == "x-forwarded-proto"
+            || name.as_str() == "x-forwarded-for"
+        {
+            continue;
+        }
+        if let Ok(v) = value.to_str() {
             req.push_str(&format!("{}: {}\r\n", name, v));
         }
     }
@@ -54,7 +90,13 @@ fn build_upgrade_request(request: &Request, target: &ProxyTarget) -> String {
 }
 
 /// Proxy a WebSocket connection
-async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
+async fn proxy_websocket(
+    target: &ProxyTarget,
+    request: Request,
+    host: &str,
+    scheme: &str,
+    client_ip: Option<IpAddr>,
+) -> Response {
     // Connect to backend
     let backend_addr = format!("{}:{}", target.host(), target.port());
     debug!(target = %target, "Connecting to backend for WebSocket");
@@ -72,7 +114,7 @@ async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
     let start_time = Instant::now();
 
     // Build and send the upgrade request to backend
-    let upgrade_request = build_upgrade_request(&request, target);
+    let upgrade_request = build_upgrade_request(&request, target, host, scheme, client_ip);
 
     if let Err(e) = backend.write_all(upgrade_request.as_bytes()).await {
         return (
@@ -194,12 +236,82 @@ async fn proxy_websocket(target: &ProxyTarget, request: Request) -> Response {
     builder.body(Body::empty()).unwrap()
 }
 
+/// Set `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` headers.
+fn set_forwarding_headers(
+    headers: &mut HeaderMap,
+    host: &str,
+    scheme: &str,
+    client_ip: Option<IpAddr>,
+) {
+    if let Ok(value) = HeaderValue::from_str(host) {
+        headers.insert("x-forwarded-host", value);
+    }
+
+    if let Ok(value) = HeaderValue::from_str(scheme) {
+        headers.insert("x-forwarded-proto", value);
+    }
+
+    let xff = if let Some(ip) = client_ip {
+        let value = match headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            Some(existing) => format!("{}, {}", existing, ip),
+            None => ip.to_string(),
+        };
+        if let Ok(hv) = HeaderValue::from_str(&value) {
+            headers.insert("x-forwarded-for", hv);
+        }
+        value
+    } else {
+        String::new()
+    };
+
+    debug!(
+        x_forwarded_host = %host,
+        x_forwarded_proto = %scheme,
+        x_forwarded_for = %xff,
+        "Forwarding headers set"
+    );
+}
+
+/// Remove hop-by-hop headers that must not be forwarded (RFC 2616 §13.5.1).
+///
+/// Also strips any extra headers listed in the `Connection` header value.
+fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
+    // Collect headers named in the Connection value (e.g. "Connection: X-Custom, keep-alive").
+    let connection_headers: Vec<HeaderName> = headers
+        .get(header::CONNECTION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.split(',')
+                .filter_map(|token| HeaderName::from_bytes(token.trim().as_bytes()).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    headers.remove(header::CONNECTION);
+    headers.remove("keep-alive");
+    headers.remove(header::PROXY_AUTHENTICATE);
+    headers.remove(header::PROXY_AUTHORIZATION);
+    headers.remove(header::TE);
+    headers.remove(header::TRAILER);
+    headers.remove(header::TRANSFER_ENCODING);
+
+    for name in connection_headers {
+        headers.remove(&name);
+    }
+}
+
 /// Proxy a request to a backend (supports HTTP/1.1, HTTP/2, and WebSocket)
-pub async fn proxy_request(target: &ProxyTarget, request: Request) -> Response {
+pub async fn proxy_request(
+    target: &ProxyTarget,
+    request: Request,
+    host: &str,
+    scheme: &str,
+    client_ip: Option<IpAddr>,
+) -> Response {
     // Check for WebSocket upgrade
     if is_websocket_upgrade(&request) {
         debug!(target = %target, "Proxying WebSocket request");
-        return proxy_websocket(target, request).await;
+        return proxy_websocket(target, request, host, scheme, client_ip).await;
     }
 
     debug!(target = %target, "Proxying HTTP request");
@@ -235,14 +347,21 @@ pub async fn proxy_request(target: &ProxyTarget, request: Request) -> Response {
     let mut request = request;
     *request.uri_mut() = uri;
 
-    // Remove host header (will be set by client)
-    request.headers_mut().remove("host");
+    // Set forwarding headers before removing Host
+    set_forwarding_headers(request.headers_mut(), host, scheme, client_ip);
+
+    // Remove original Host header (hyper client sets it for the target)
+    request.headers_mut().remove(header::HOST);
+
+    // Strip hop-by-hop headers
+    strip_hop_by_hop_headers(request.headers_mut());
 
     // Forward the request
     match client.request(request).await {
         Ok(response) => {
             debug!(target = %target, status = %response.status(), "Proxy response");
-            let (parts, body) = response.into_parts();
+            let (mut parts, body) = response.into_parts();
+            strip_hop_by_hop_headers(&mut parts.headers);
             Response::from_parts(parts, Body::new(body))
         }
         Err(e) => {

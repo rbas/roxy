@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    Router,
+    Extension, Router,
     extract::{Request, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
@@ -12,7 +12,7 @@ use tracing::{debug, info};
 use crate::domain::{DomainRegistration, RouteTarget};
 
 use super::embedded_assets;
-use super::proxy::proxy_request;
+use super::proxy::{ClientAddr, Scheme, proxy_request};
 use super::static_files::serve_static;
 use super::theme;
 
@@ -65,7 +65,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 }
 
 /// Handle all incoming requests
-async fn handle_request(State(state): State<Arc<AppState>>, request: Request) -> Response {
+async fn handle_request(
+    State(state): State<Arc<AppState>>,
+    scheme: Option<Extension<Scheme>>,
+    client_addr: Option<Extension<ClientAddr>>,
+    request: Request,
+) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();
 
@@ -104,12 +109,17 @@ async fn handle_request(State(state): State<Arc<AppState>>, request: Request) ->
         "Routing request"
     );
 
+    let proto = scheme.map(|Extension(s)| s.0).unwrap_or("http");
+    let client_ip = client_addr.map(|Extension(a)| a.0);
+
     // Route to appropriate backend based on target type
     let response = match &route.target {
         RouteTarget::StaticFiles(dir) => {
             serve_static(route.path.as_str(), dir.clone(), request).await
         }
-        RouteTarget::Proxy(target) => proxy_request(target, request).await,
+        RouteTarget::Proxy(target) => {
+            proxy_request(target, request, &host, proto, client_ip).await
+        }
     };
 
     info!(
