@@ -28,6 +28,7 @@ HTTPS for every local project.
 | Remember 5 different ports for 5 services | One domain, path-based routing |
 | Can't test webhooks/OAuth locally | Works with Stripe, OAuth, callbacks |
 | Edit nginx configs, restart services | `roxy register myapp.roxy` |
+| Manual setup for each subdomain | `--wildcard` and every subdomain just works |
 | No visibility into traffic | Full request/WebSocket logging |
 
 ## See It In Action
@@ -71,7 +72,10 @@ to help others discover it!
   (Stripe, GitHub, etc.)
 - 👥 **Teams** — Share work across devices on the same network
 - 🔧 **Microservices developers** — Stop memorizing which service is on which port
-- 🎨 **Anyone tired of `localhost:3000`** — Get real domains like `myapp.roxy` instead
+- 🏢 **Multi-tenant SaaS developers** — Wildcard subdomains
+  (`*.myapp.roxy`) for testing tenant routing locally
+- 🎨 **Anyone tired of `localhost:3000`** — Get real domains
+  like `myapp.roxy` instead
 
 ### Multiple Projects, Zero Conflicts
 
@@ -79,9 +83,14 @@ to help others discover it!
 roxy register frontend.roxy --route "/=3000"
 roxy register backend.roxy --route "/=8080" --route "/api=8081"
 roxy register docs.roxy --route "/=/var/www/docs"
+
+# Wildcard: one registration covers all subdomains
+roxy register myapp.roxy --wildcard --route "/=3000"
+# → myapp.roxy, api.myapp.roxy, admin.myapp.roxy...
 ```
 
-All domains work simultaneously. No port conflicts. No config files to manage.
+All domains work simultaneously. No port conflicts.
+No config files to manage.
 
 ## Features
 
@@ -93,6 +102,8 @@ All domains work simultaneously. No port conflicts. No config files to manage.
 - ✓ **Path-based routing** — Route `/` to port 3000, `/api` to port
   3001, `/static` to a directory
 - ✓ **Built-in DNS server** — No dnsmasq, no external DNS tools needed
+- ✓ **Wildcard subdomains** — Register `*.myapp.roxy` and every
+  subdomain just works, with trusted HTTPS
 - ✓ **Single binary** — No nginx, no containers, no runtime dependencies
 
 **Developer Experience:**
@@ -135,6 +146,23 @@ roxy register myapp.roxy \
 # https://myapp.roxy          → Next.js frontend
 # https://myapp.roxy/api      → Express API
 # https://myapp.roxy/admin    → Admin dashboard
+```
+
+### Multi-Tenant SaaS with Wildcard Subdomains
+
+Your app uses subdomains for tenants? One command:
+
+```bash
+# Register a wildcard — covers myapp.roxy AND *.myapp.roxy
+roxy register myapp.roxy --wildcard \
+  --route "/=3000" \
+  --route "/api=3001"
+
+# All of these work instantly, trusted HTTPS included:
+# https://myapp.roxy            → main app
+# https://acme.myapp.roxy       → tenant "acme"
+# https://globex.myapp.roxy     → tenant "globex"
+# No extra registration needed. Just add a subdomain and go.
 ```
 
 ### Mobile App Development
@@ -197,6 +225,9 @@ DEBUG WebSocket upgrade successful target=127.0.0.1:3000
 ```bash
 # Register a domain with routes
 roxy register <domain> --route "PATH=TARGET" [--route "PATH=TARGET" ...]
+
+# Register with wildcard subdomains (*.myapp.roxy)
+roxy register <domain> --wildcard --route "PATH=TARGET"
 
 # Targets can be:
 #   Port:        --route "/=3000"              → proxies to 127.0.0.1:3000
@@ -292,6 +323,7 @@ For configuration details, logging options, and file locations see the [full doc
 | Single binary | ✓ | ✗ | ✗ | ✓ | N/A |
 | Any tech stack | ✓ | ✓ | PHP-focused | ✓ | ✓ |
 | WebSocket support | ✓ | ✓ | ~ | ✓ | ~ |
+| Wildcard subdomains | ✓ | Manual setup | ✗ | ✗ | ✗ |
 | Built-in DNS server | ✓ | ✗ | Uses dnsmasq | N/A | ✗ |
 
 **TL;DR:** Roxy gives you the power of nginx with the simplicity of
@@ -354,11 +386,14 @@ Roxy is ready for daily development use on macOS. Recent additions and future pl
   (macOS ARM64)
 - [x] **Homebrew support** — `brew tap rbas/roxy && brew install roxy`
 - [x] **Auto-start on boot** — launch daemon via launchd with `brew services`
-- [x] **File browser** — automatic directory listing for static file routes
-- [ ] **Linux support** — extend to Linux development environments
-- [ ] **Docker network DNS** — resolve `.roxy` domains inside containers
-  without `extra_hosts`
-- [ ] **Wildcard subdomains** — support `*.myapp.roxy` patterns
+- [x] **File browser** — automatic directory listing
+  for static file routes
+- [x] **Wildcard subdomains** — `*.myapp.roxy` patterns
+  with automatic certificate generation
+- [ ] **Linux support** — extend to Linux development
+  environments
+- [ ] **Docker network DNS** — resolve `.roxy` domains
+  inside containers without `extra_hosts`
 
 Have a feature idea?
 [Open an issue](https://github.com/rbas/roxy/issues) and let's discuss!

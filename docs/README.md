@@ -25,22 +25,23 @@ open https://myapp.roxy
 
 ## Commands Reference
 
-| Command                            | Description                |
-| ---------------------------------- | -------------------------- |
-| `sudo roxy install`                | Initial setup              |
-| `sudo roxy uninstall [--force]`    | Full cleanup               |
-| `sudo roxy register <domain> ...`  | Register domain            |
-| `sudo roxy unregister <domain>`    | Remove domain              |
-| `roxy list`                        | Show all domains           |
-| `sudo roxy route add ...`          | Add route to domain        |
-| `roxy route remove ...`            | Remove route from domain   |
-| `roxy route list <domain>`         | List routes for domain     |
-| `sudo roxy start [--foreground]`   | Start daemon               |
-| `sudo roxy stop`                   | Stop daemon                |
-| `sudo roxy restart`                | Restart daemon             |
-| `sudo roxy reload`                 | Reload configuration       |
-| `roxy status`                      | Show daemon status         |
-| `roxy logs [-n N] [-f]`            | View or follow daemon logs |
+| Command                            | Description            |
+| ---------------------------------- | ---------------------- |
+| `sudo roxy install`                | Initial setup          |
+| `sudo roxy uninstall [--force]`    | Full cleanup           |
+| `sudo roxy register <domain> ...`  | Register domain        |
+| `sudo roxy register --wildcard ..` | Register wildcard      |
+| `sudo roxy unregister <domain>`    | Remove domain          |
+| `roxy list`                        | Show all domains       |
+| `sudo roxy route add ...`          | Add route to domain    |
+| `roxy route remove ...`            | Remove route           |
+| `roxy route list <domain>`         | List routes for domain |
+| `sudo roxy start [--foreground]`   | Start daemon           |
+| `sudo roxy stop`                   | Stop daemon            |
+| `sudo roxy restart`                | Restart daemon         |
+| `sudo roxy reload`                 | Reload configuration   |
+| `roxy status`                      | Show daemon status     |
+| `roxy logs [-n N] [-f]`            | View or follow logs    |
 
 **Note:** Commands that modify system configuration
 (CA certs, DNS) or control the daemon (runs on ports
@@ -84,6 +85,81 @@ You can also manage routes after registration:
 roxy route add app.roxy /webhooks 9000
 roxy route remove app.roxy /webhooks
 roxy route list app.roxy
+```
+
+## Wildcard Subdomains
+
+Register a domain with `--wildcard` to match the base
+domain **and** any single-level subdomain. Roxy generates
+a wildcard TLS certificate so every subdomain gets
+trusted HTTPS automatically.
+
+```bash
+roxy register myapp.roxy --wildcard --route "/=3000"
+```
+
+This single registration handles all of these:
+
+| URL | Matches? |
+| --- | -------- |
+| `https://myapp.roxy` | yes |
+| `https://blog.myapp.roxy` | yes |
+| `https://api.myapp.roxy` | yes |
+| `https://a.b.myapp.roxy` | no (multi-level) |
+| `https://other.roxy` | no (different domain) |
+
+### Combining Exact and Wildcard
+
+You can register both an exact domain and a wildcard
+for the same base domain. The exact registration takes
+priority when both match:
+
+```bash
+# Exact: dedicated routes for the base domain
+roxy register myapp.roxy --route "/=3000"
+
+# Wildcard: catch-all for subdomains
+roxy register myapp.roxy --wildcard --route "/=4000"
+
+# myapp.roxy        → port 3000 (exact wins)
+# blog.myapp.roxy   → port 4000 (wildcard)
+# api.myapp.roxy    → port 4000 (wildcard)
+```
+
+### Managing Wildcard Routes
+
+Use `--wildcard` with `route` subcommands to manage
+routes on a wildcard registration:
+
+```bash
+roxy route add --wildcard myapp.roxy /api 3001
+roxy route remove --wildcard myapp.roxy /api
+roxy route list --wildcard myapp.roxy
+```
+
+### Unregistering a Wildcard
+
+```bash
+roxy unregister --wildcard myapp.roxy
+```
+
+This removes the wildcard registration and its
+certificate. Any exact registration for the same domain
+is left untouched.
+
+### Configuration
+
+Wildcard registrations are stored in `config.toml`
+with a `*.` prefix on the domain:
+
+```toml
+[domains.wildcard-myapp-roxy]
+domain = "*.myapp.roxy"
+https_enabled = true
+
+[[domains.wildcard-myapp-roxy.routes]]
+path = "/"
+target = "127.0.0.1:3000"
 ```
 
 ## Static File Serving
@@ -256,6 +332,8 @@ target = "127.0.0.1:3001"
 
 Domain names must end with `.roxy` and can contain
 letters, numbers, hyphens, and dots (for subdomains).
+Wildcard registrations use a `*.` prefix
+(see [Wildcard Subdomains](#wildcard-subdomains)).
 
 ### Paths Section
 
