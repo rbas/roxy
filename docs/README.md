@@ -88,6 +88,60 @@ roxy route remove app.roxy /webhooks
 roxy route list app.roxy
 ```
 
+## Reverse Proxy Behavior
+
+When forwarding requests to a backend service, Roxy
+sets standard proxy headers and strips hop-by-hop headers
+per [RFC 7230 §6.1][rfc7230].
+
+[rfc7230]: https://www.rfc-editor.org/rfc/rfc7230#section-6.1
+
+### Forwarding Headers
+
+Roxy adds these headers to every proxied request so your
+backend knows the original client details:
+
+| Header | Value |
+| ------ | ----- |
+| `X-Forwarded-Host` | Original `Host` header from the client |
+| `X-Forwarded-Proto` | `http` or `https` |
+| `X-Forwarded-For` | Client IP (appended to existing chain) |
+
+Most frameworks use these automatically. For example,
+Django reads `X-Forwarded-Proto` to decide whether to
+generate `https://` URLs, and Rails uses
+`X-Forwarded-Host` for routing.
+
+### Hop-by-Hop Header Stripping
+
+Roxy removes the following hop-by-hop headers from both
+the forwarded request and the backend response:
+
+`Connection`, `Keep-Alive`, `Proxy-Authenticate`,
+`Proxy-Authorization`, `TE`, `Trailer`,
+`Transfer-Encoding`, `Upgrade`, plus any headers
+listed in the `Connection` header value.
+
+These headers describe the connection between two
+adjacent nodes (client↔proxy or proxy↔backend) and
+must not leak across hops.
+
+### Debugging Proxy Headers
+
+Enable debug logging to see the forwarding headers
+Roxy sets on each request
+(see [Logging and Verbosity](#logging-and-verbosity)):
+
+```bash
+ROXY_LOG=debug sudo roxy start --foreground
+```
+
+```text
+DEBUG Forwarding headers set x_forwarded_host=myapp.roxy
+  x_forwarded_proto=https x_forwarded_for=127.0.0.1
+DEBUG Proxying HTTP request target=127.0.0.1:3000
+```
+
 ## Wildcard Subdomains
 
 Register a domain with `--wildcard` to match the base

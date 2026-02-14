@@ -2,16 +2,30 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::{
+    Extension, extract::ConnectInfo, extract::Request, middleware::Next, response::Response,
+};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tracing::{error, info, warn};
 
 use super::dns_server::DnsServer;
+use super::proxy::{ClientAddr, Scheme};
 use super::router::{AppState, create_router};
 use super::tls::create_tls_acceptor;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::paths::RoxyPaths;
+
+/// Middleware that copies the client IP from `ConnectInfo` into a `ClientAddr` extension.
+async fn inject_client_addr(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    request.extensions_mut().insert(ClientAddr(addr.ip()));
+    next.run(request).await
+}
 
 pub struct Server {
     state: Arc<AppState>,
@@ -74,7 +88,9 @@ impl Server {
         let https_addr = SocketAddr::from(([0, 0, 0, 0], self.https_port));
 
         // Start HTTP server - always serve content (no redirect to HTTPS)
-        let http_router = create_router(self.state.clone());
+        let http_router = create_router(self.state.clone())
+            .layer(Extension(Scheme::Http))
+            .layer(axum::middleware::from_fn(inject_client_addr));
 
         let http_listener = TcpListener::bind(http_addr).await.context(format!(
             "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
@@ -84,14 +100,17 @@ impl Server {
         info!(addr = %http_addr, "HTTP server listening");
 
         let http_server = tokio::spawn(async move {
-            axum::serve(http_listener, http_router)
-                .await
-                .map_err(|e| anyhow::anyhow!("HTTP server error: {}", e))
+            axum::serve(
+                http_listener,
+                http_router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("HTTP server error: {}", e))
         });
 
         // Start HTTPS server if TLS is available
         if let Some(tls_acceptor) = self.tls_acceptor {
-            let https_router = create_router(self.state);
+            let https_router = create_router(self.state).layer(Extension(Scheme::Https));
             let https_listener = TcpListener::bind(https_addr).await.context(format!(
                 "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
                 self.https_port, self.https_port
@@ -101,7 +120,7 @@ impl Server {
 
             let https_server = tokio::spawn(async move {
                 loop {
-                    let (stream, _addr) = match https_listener.accept().await {
+                    let (stream, addr) = match https_listener.accept().await {
                         Ok(conn) => conn,
                         Err(e) => {
                             error!(error = %e, "Failed to accept connection");
@@ -110,7 +129,10 @@ impl Server {
                     };
 
                     let acceptor = tls_acceptor.clone();
-                    let router = https_router.clone();
+                    // The HTTPS path uses manual TLS accept, so ConnectInfo is not
+                    // available. Instead, inject the client IP directly as an Extension
+                    // on each accepted connection.
+                    let router = https_router.clone().layer(Extension(ClientAddr(addr.ip())));
 
                     tokio::spawn(async move {
                         let stream = match acceptor.accept(stream).await {

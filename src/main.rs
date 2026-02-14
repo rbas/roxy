@@ -224,12 +224,7 @@ fn main() -> Result<()> {
         } => cli::logs::execute(lines, clear, follow, &paths),
         Commands::Reload => cli::reload::execute(cli.verbose, config_path, &paths),
         Commands::Completions { shell } => {
-            clap_complete::generate(
-                shell,
-                &mut Cli::command(),
-                "roxy",
-                &mut std::io::stdout(),
-            );
+            clap_complete::generate(shell, &mut Cli::command(), "roxy", &mut std::io::stdout());
             Ok(())
         }
     }
