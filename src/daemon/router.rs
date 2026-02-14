@@ -117,9 +117,7 @@ async fn handle_request(
         RouteTarget::StaticFiles(dir) => {
             serve_static(route.path.as_str(), dir.clone(), request).await
         }
-        RouteTarget::Proxy(target) => {
-            proxy_request(target, request, &host, proto, client_ip).await
-        }
+        RouteTarget::Proxy(target) => proxy_request(target, request, &host, proto, client_ip).await,
     };
 
     info!(
