@@ -313,18 +313,23 @@ For configuration details, logging options, and file locations see the [full doc
 
 ## How Is This Different?
 
-| Feature | Roxy | nginx/Traefik | Laravel Valet | ngrok | /etc/hosts |
-| ------- | ---- | ------------- | ------------- | ----- | ---------- |
-| Zero config files | ✓ | ✗ | ✗ | ✓ | ~ |
-| Trusted HTTPS | ✓ | Manual setup | ✓ | ✓ | ✗ |
-| Path-based routing | ✓ | Manual setup | ✗ | Limited | ✗ |
-| Built-in traffic logs | ✓ | Manual setup | ✗ | ✓ | ✗ |
-| Stays local | ✓ | ✓ | ✓ | ✗ | ✓ |
-| Single binary | ✓ | ✗ | ✗ | ✓ | N/A |
-| Any tech stack | ✓ | ✓ | PHP-focused | ✓ | ✓ |
-| WebSocket support | ✓ | ✓ | ~ | ✓ | ~ |
-| Wildcard subdomains | ✓ | Manual setup | ✗ | ✗ | ✗ |
-| Built-in DNS server | ✓ | ✗ | Uses dnsmasq | N/A | ✗ |
+| Feature             | Roxy | Caddy        | nginx/Traefik | Laravel Valet | ngrok   | /etc/hosts |
+| ------------------- | ---- | ------------ | ------------- | ------------- | ------- | ---------- |
+| Zero config files   | ✓    | ~            | ✗             | ✗             | ✓       | ~          |
+| Trusted HTTPS       | ✓    | ✓            | Manual setup  | ✓             | ✓       | ✗          |
+| Built-in DNS        | ✓    | ✗            | ✗             | Uses dnsmasq  | N/A     | ✗          |
+| Path-based routing  | ✓    | ✓            | Manual setup  | ✗             | Limited | ✗          |
+| Built-in traffic logs | ✓  | ✓            | Manual setup  | ✗             | ✓       | ✗          |
+| Stays local         | ✓    | ✓            | ✓             | ✓             | ✗       | ✓          |
+| Single binary       | ✓    | ✓            | ✗             | ✗             | ✓       | N/A        |
+| Any tech stack      | ✓    | ✓            | ✓             | PHP-focused   | ✓       | ✓          |
+| WebSocket support   | ✓    | ✓            | ✓             | ~             | ✓       | ~          |
+| Wildcard subdomains | ✓    | Config-based | Manual setup  | ✗             | ✗       | ✗          |
+
+**Caddy** is the closest alternative — it has excellent HTTPS ergonomics with a
+built-in CA and `caddy trust`. The main differences are that Roxy includes a
+DNS server (no `/etc/hosts` editing) and handles wildcard subdomain DNS
+resolution out of the box.
 
 **TL;DR:** Roxy gives you the power of nginx with the simplicity of
 ngrok, but everything stays on your machine. One command to register a
