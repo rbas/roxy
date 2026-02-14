@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod application;
 mod cli;
 mod daemon;
 mod domain;
@@ -48,6 +49,10 @@ enum Commands {
         /// Domain name (must end with .roxy)
         domain: String,
 
+        /// Register wildcard subdomains for this domain (matches myapp.roxy and *.myapp.roxy)
+        #[arg(long)]
+        wildcard: bool,
+
         /// Route in format PATH=TARGET (e.g., "/=3000" or "/api=3001")
         /// TARGET can be: port (3000), host:port (192.168.1.50:3000), or path (/var/www)
         #[arg(long, short = 'r', value_name = "PATH=TARGET", required = true)]
@@ -58,6 +63,10 @@ enum Commands {
     Unregister {
         /// Domain name to unregister
         domain: String,
+
+        /// Unregister wildcard subdomains for this domain (removes *.myapp.roxy registration)
+        #[arg(long)]
+        wildcard: bool,
 
         /// Skip confirmation prompt
         #[arg(long)]
@@ -112,6 +121,10 @@ enum Commands {
 enum RouteCommands {
     /// Add a route to an existing domain
     Add {
+        /// Manage wildcard registration for this domain (matches myapp.roxy and *.myapp.roxy)
+        #[arg(long)]
+        wildcard: bool,
+
         /// Domain name
         domain: String,
 
@@ -124,6 +137,10 @@ enum RouteCommands {
 
     /// Remove a route from a domain
     Remove {
+        /// Manage wildcard registration for this domain (matches myapp.roxy and *.myapp.roxy)
+        #[arg(long)]
+        wildcard: bool,
+
         /// Domain name
         domain: String,
 
@@ -133,6 +150,10 @@ enum RouteCommands {
 
     /// List routes for a domain
     List {
+        /// Manage wildcard registration for this domain (matches myapp.roxy and *.myapp.roxy)
+        #[arg(long)]
+        wildcard: bool,
+
         /// Domain name
         domain: String,
     },
@@ -156,20 +177,31 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Install => cli::install::execute(config_path, &paths, &config),
         Commands::Uninstall { force } => cli::uninstall::execute(force, config_path, &paths),
-        Commands::Register { domain, route } => {
-            cli::register::execute(domain, route, config_path, &paths)
-        }
-        Commands::Unregister { domain, force } => {
-            cli::unregister::execute(domain, force, config_path, &paths)
-        }
+        Commands::Register {
+            domain,
+            wildcard,
+            route,
+        } => cli::register::execute(domain, wildcard, route, config_path, &paths),
+        Commands::Unregister {
+            domain,
+            wildcard,
+            force,
+        } => cli::unregister::execute(domain, wildcard, force, config_path, &paths),
         Commands::Route { command } => match command {
             RouteCommands::Add {
+                wildcard,
                 domain,
                 path,
                 target,
-            } => cli::route::add(domain, path, target, config_path),
-            RouteCommands::Remove { domain, path } => cli::route::remove(domain, path, config_path),
-            RouteCommands::List { domain } => cli::route::list(domain, config_path),
+            } => cli::route::add(domain, wildcard, path, target, config_path),
+            RouteCommands::Remove {
+                wildcard,
+                domain,
+                path,
+            } => cli::route::remove(domain, wildcard, path, config_path),
+            RouteCommands::List { wildcard, domain } => {
+                cli::route::list(domain, wildcard, config_path)
+            }
         },
         Commands::List => cli::list::execute(config_path, &paths),
         Commands::Start { foreground } => {

@@ -23,9 +23,9 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
     println!("Registered domains:\n");
 
     for reg in domains {
-        // Check actual certificate status
-        let https_status = if cert_service.exists(&reg.domain) {
-            match cert_service.is_trusted(&reg.domain) {
+        let has_cert = cert_service.exists(reg.pattern());
+        let https_status = if has_cert {
+            match cert_service.is_trusted() {
                 Ok(true) => "(HTTPS)",
                 Ok(false) => "(HTTPS untrusted)",
                 Err(_) => "(HTTPS error)",
@@ -34,9 +34,9 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
             ""
         };
 
-        println!("  {} {}", reg.domain, https_status);
+        println!("  {} {}", reg.display_pattern(), https_status);
 
-        for route in &reg.routes {
+        for route in reg.routes() {
             let target_str = match &route.target {
                 RouteTarget::Proxy(p) => p.to_string(),
                 RouteTarget::StaticFiles(p) => p.display().to_string(),

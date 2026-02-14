@@ -9,7 +9,6 @@ use tracing::{error, info, warn};
 use super::dns_server::DnsServer;
 use super::router::{AppState, create_router};
 use super::tls::create_tls_acceptor;
-use crate::domain::DomainName;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::paths::RoxyPaths;
@@ -28,18 +27,18 @@ impl Server {
         // Validate config before starting
         config.validate()?;
 
-        let registrations: Vec<_> = config.domains.values().cloned().collect();
-        let state = Arc::new(AppState::new(registrations));
+        let registrations = config.registrations();
 
-        // Get domains with HTTPS enabled
-        let https_domains: Vec<DomainName> = config
-            .domains
-            .values()
-            .filter(|d| d.https_enabled)
-            .map(|d| d.domain.clone())
+        // Collect patterns for domains with HTTPS enabled
+        let https_patterns: Vec<_> = registrations
+            .iter()
+            .filter(|d| d.is_https_enabled())
+            .map(|d| d.pattern().clone())
             .collect();
 
-        let tls_acceptor = create_tls_acceptor(&https_domains, &paths.certs_dir)?;
+        let state = Arc::new(AppState::new(registrations));
+
+        let tls_acceptor = create_tls_acceptor(&https_patterns, &paths.certs_dir, &paths.data_dir)?;
 
         // Get LAN IP for DNS responses (DNS server handles source-based resolution)
         let lan_ip = get_lan_ip();

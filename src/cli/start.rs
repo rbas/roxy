@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use std::env;
 use std::process::{Command, Stdio};
 
-use crate::infrastructure::config::{Config, ConfigStore};
+use crate::infrastructure::config::Config;
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
@@ -33,7 +33,7 @@ pub fn execute(
 
     if foreground {
         // Run in foreground (blocking)
-        run_server(verbose, config_path, paths)
+        crate::daemon::lifecycle::run(verbose, config_path, paths)
     } else {
         // Fork to background
         let exe = env::current_exe()?;
@@ -76,48 +76,4 @@ pub fn execute(
 
         Ok(())
     }
-}
-
-#[tokio::main]
-async fn run_server(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Result<()> {
-    use std::io::IsTerminal;
-
-    use crate::daemon::Server;
-    use crate::infrastructure::pid::PidFile;
-    use crate::infrastructure::tracing::{TracingOutput, init_tracing};
-    use tracing::info;
-
-    // When running interactively (stdout is a TTY), log to stdout
-    // When running as daemon (stdout is /dev/null), log to file
-    let output = if std::io::stdout().is_terminal() {
-        TracingOutput::Stdout
-    } else {
-        TracingOutput::File(paths.log_file.clone())
-    };
-    init_tracing(verbose, output);
-
-    info!("Roxy daemon started");
-
-    let pid_file = PidFile::new(paths.pid_file.clone());
-    pid_file.write()?;
-
-    // Handle Ctrl+C gracefully
-    let cleanup_pid = PidFile::new(paths.pid_file.clone());
-    ctrlc::set_handler(move || {
-        let _ = cleanup_pid.remove();
-        std::process::exit(0);
-    })?;
-
-    println!("Starting Roxy daemon...");
-
-    // Load config fresh from disk (this path is used by the forked
-    // subprocess, so it must re-read from the config file)
-    let config_store = ConfigStore::new(config_path.to_path_buf());
-    let config = config_store.load()?;
-
-    let server = Server::new(&config, paths)?;
-    let result = server.run().await;
-
-    pid_file.remove()?;
-    result
 }

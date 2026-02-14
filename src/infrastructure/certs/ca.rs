@@ -1,10 +1,6 @@
-use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
-    KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
-};
+use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, PKCS_ECDSA_P256_SHA256};
 use std::fs;
 use std::path::PathBuf;
-use time::{Duration, OffsetDateTime};
 
 use super::CertError;
 
@@ -49,23 +45,9 @@ impl RootCA {
         let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
             .map_err(|e| CertError::GenerationError(e.to_string()))?;
 
-        // Configure CA certificate parameters
-        let mut params = CertificateParams::default();
-
-        // Set distinguished name
-        let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, "Roxy Local Development CA");
-        dn.push(DnType::OrganizationName, "Roxy");
-        params.distinguished_name = dn;
-
-        // Set validity period (10 years for CA)
-        let now = OffsetDateTime::now_utc();
-        params.not_before = now;
-        params.not_after = now + Duration::days(3650);
-
-        // Mark as CA certificate
+        // Configure CA certificate parameters (shared DN + validity + key usage)
+        let mut params = super::generator::build_ca_cert_params();
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
 
         // Generate the self-signed CA certificate
         let cert = params
@@ -125,20 +107,7 @@ impl RootCA {
     ) -> Result<String, CertError> {
         let ca_key_pair = self.load_key_pair()?;
 
-        // Create CA certificate params to sign with
-        let mut ca_params = CertificateParams::default();
-        let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, "Roxy Local Development CA");
-        dn.push(DnType::OrganizationName, "Roxy");
-        ca_params.distinguished_name = dn;
-
-        let now = OffsetDateTime::now_utc();
-        ca_params.not_before = now;
-        ca_params.not_after = now + Duration::days(3650);
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-
-        // Create issuer from CA params and key pair
+        let ca_params = super::generator::build_ca_cert_params();
         let issuer = Issuer::from_params(&ca_params, &ca_key_pair);
 
         // Sign the domain certificate

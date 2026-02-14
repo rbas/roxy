@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Result, bail};
 
 use crate::infrastructure::paths::RoxyPaths;
@@ -6,35 +8,11 @@ use crate::infrastructure::pid::PidFile;
 pub fn execute(paths: &RoxyPaths) -> Result<()> {
     let pid_file = PidFile::new(paths.pid_file.clone());
 
-    let pid = match pid_file.get_running_pid()? {
-        Some(pid) => pid,
-        None => bail!("Roxy daemon is not running."),
-    };
-
-    // Send SIGTERM to the process
-    #[cfg(unix)]
-    {
-        use std::process::Command;
-        Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .output()?;
+    if pid_file.get_running_pid()?.is_none() {
+        bail!("Roxy daemon is not running.");
     }
 
-    // Wait a moment and check if it stopped
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    if pid_file.is_running()? {
-        // Force kill if still running
-        #[cfg(unix)]
-        {
-            use std::process::Command;
-            Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .output()?;
-        }
-    }
-
-    pid_file.remove()?;
+    pid_file.stop_gracefully(Duration::from_millis(500))?;
     println!("Roxy daemon stopped.");
 
     Ok(())

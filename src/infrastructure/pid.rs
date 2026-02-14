@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 use std::process;
+use std::time::Duration;
 
 pub struct PidFile {
     path: PathBuf,
@@ -55,6 +56,40 @@ impl PidFile {
             _ => Ok(None),
         }
     }
+
+    /// Stop the running daemon gracefully.
+    ///
+    /// Sends SIGTERM, waits for the given timeout, then sends SIGKILL
+    /// if the process is still running. Removes the PID file on success.
+    pub fn stop_gracefully(&self, timeout: Duration) -> Result<()> {
+        let pid = match self.get_running_pid()? {
+            Some(pid) => pid,
+            None => return Ok(()),
+        };
+
+        terminate_process(pid, timeout)?;
+        self.remove()
+    }
+}
+
+/// Send SIGTERM, wait, then SIGKILL if still running.
+#[cfg(unix)]
+fn terminate_process(pid: u32, timeout: Duration) -> Result<()> {
+    use std::process::Command;
+
+    Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .output()?;
+
+    std::thread::sleep(timeout);
+
+    if process_exists(pid) {
+        Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .output()?;
+    }
+
+    Ok(())
 }
 
 /// Check if a process exists (Unix-specific)
