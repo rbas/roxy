@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 mod application;
 mod cli;
@@ -115,6 +116,12 @@ enum Commands {
 
     /// Reload daemon configuration
     Reload,
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
+    },
 }
 
 #[derive(Subcommand)]
@@ -216,5 +223,14 @@ fn main() -> Result<()> {
             follow,
         } => cli::logs::execute(lines, clear, follow, &paths),
         Commands::Reload => cli::reload::execute(cli.verbose, config_path, &paths),
+        Commands::Completions { shell } => {
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "roxy",
+                &mut std::io::stdout(),
+            );
+            Ok(())
+        }
     }
 }

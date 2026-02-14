@@ -116,6 +116,7 @@ No config files to manage.
 - ✓ **LAN access** — Access your projects from phone/tablet on the same network
 - ✓ **Any tech stack** — Works with Next.js, Rails, Django, Express,
   Go, Rust, PHP... anything on any port
+- ✓ **Shell completions** — Tab completion for bash, zsh, and fish
 
 ## Real-World Examples
 

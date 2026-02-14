@@ -42,6 +42,7 @@ open https://myapp.roxy
 | `sudo roxy reload`                 | Reload configuration   |
 | `roxy status`                      | Show daemon status     |
 | `roxy logs [-n N] [-f]`            | View or follow logs    |
+| `roxy completions <shell>`         | Generate completions   |
 
 **Note:** Commands that modify system configuration
 (CA certs, DNS) or control the daemon (runs on ports
@@ -278,6 +279,40 @@ Change the log level (highest priority first):
 4. **Default** — `info`
 
 Available levels: `error`, `warn`, `info`, `debug`.
+
+## Shell Completions
+
+Generate tab completions for your shell with
+`roxy completions <shell>`, then restart the shell.
+
+**Fish:**
+
+```bash
+roxy completions fish > ~/.config/fish/completions/roxy.fish
+```
+
+**Zsh:**
+
+```bash
+roxy completions zsh > ~/.zfunc/_roxy
+```
+
+Make sure `~/.zfunc` is in your fpath. Add to `.zshrc`:
+
+```bash
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
+```
+
+**Bash:**
+
+```bash
+roxy completions bash \
+  > ~/.local/share/bash-completion/completions/roxy
+```
+
+After setup, press `Tab` to complete commands, options,
+and arguments.
 
 ## Global Options
 
