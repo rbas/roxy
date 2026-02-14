@@ -7,7 +7,7 @@
 **Stop juggling localhost ports.** Get real `.roxy` domains with trusted
 HTTPS for every local project.
 
-**One binary. Zero config files. Zero dependencies.**
+**One binary. CLI-first. Zero dependencies.**
 
 - ✓ Test OAuth/webhooks locally with real HTTPS
 - ✓ See all traffic in real-time
@@ -315,7 +315,7 @@ For configuration details, logging options, and file locations see the [full doc
 
 | Feature             | Roxy | Caddy        | nginx/Traefik | Laravel Valet | ngrok   | /etc/hosts |
 | ------------------- | ---- | ------------ | ------------- | ------------- | ------- | ---------- |
-| Zero config files   | ✓    | ~            | ✗             | ✗             | ✓       | ~          |
+| CLI-first setup     | ✓    | ✓            | ✗             | ✗             | ✓       | ~          |
 | Trusted HTTPS       | ✓    | ✓            | Manual setup  | ✓             | ✓       | ✗          |
 | Built-in DNS        | ✓    | ✗            | ✗             | Uses dnsmasq  | N/A     | ✗          |
 | Path-based routing  | ✓    | ✓            | Manual setup  | ✗             | Limited | ✗          |
@@ -326,14 +326,14 @@ For configuration details, logging options, and file locations see the [full doc
 | WebSocket support   | ✓    | ✓            | ✓             | ~             | ✓       | ~          |
 | Wildcard subdomains | ✓    | Config-based | Manual setup  | ✗             | ✗       | ✗          |
 
-**Caddy** is the closest alternative — it has excellent HTTPS ergonomics with a
-built-in CA and `caddy trust`. The main differences are that Roxy includes a
-DNS server (no `/etc/hosts` editing) and handles wildcard subdomain DNS
-resolution out of the box.
+**Caddy** is the closest alternative — it has excellent HTTPS ergonomics with a built-in CA,
+`caddy trust`, and a powerful CLI (`caddy reverse-proxy --from domain --to target`). The main
+differences are that Roxy includes a built-in DNS server (no `/etc/hosts` editing needed) and
+handles wildcard subdomain DNS resolution out of the box.
 
-**TL;DR:** Roxy gives you the power of nginx with the simplicity of
-ngrok, but everything stays on your machine. One command to register a
-domain, no config files to edit.
+**TL;DR:** Roxy is purpose-built for local development. It bundles DNS, HTTPS, and reverse
+proxying into one workflow — register a domain, start the proxy, and everything just works.
+No `/etc/hosts`, no config files, no manual cert setup.
 
 ## Installation & Requirements
 
