@@ -87,7 +87,7 @@ impl Server {
 
         // Start HTTP server - always serve content (no redirect to HTTPS)
         let http_router = create_router(self.state.clone())
-            .layer(Extension(Scheme("http")))
+            .layer(Extension(Scheme::Http))
             .layer(axum::middleware::from_fn(inject_client_addr));
 
         let http_listener = TcpListener::bind(http_addr).await.context(format!(
@@ -109,7 +109,7 @@ impl Server {
         // Start HTTPS server if TLS is available
         if let Some(tls_acceptor) = self.tls_acceptor {
             let https_router = create_router(self.state)
-                .layer(Extension(Scheme("https")));
+                .layer(Extension(Scheme::Https));
             let https_listener = TcpListener::bind(https_addr).await.context(format!(
                 "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
                 self.https_port, self.https_port
@@ -128,7 +128,9 @@ impl Server {
                     };
 
                     let acceptor = tls_acceptor.clone();
-                    // Inject the client IP for this connection
+                    // The HTTPS path uses manual TLS accept, so ConnectInfo is not
+                    // available. Instead, inject the client IP directly as an Extension
+                    // on each accepted connection.
                     let router = https_router
                         .clone()
                         .layer(Extension(ClientAddr(addr.ip())));

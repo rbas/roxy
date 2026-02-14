@@ -22,14 +22,35 @@ use crate::domain::ProxyTarget;
 const X_FORWARDED_FOR: &str = "x-forwarded-for";
 const X_FORWARDED_HOST: &str = "x-forwarded-host";
 const X_FORWARDED_PROTO: &str = "x-forwarded-proto";
+const KEEP_ALIVE: &str = "keep-alive";
 
 /// Scheme of the original client request (injected by server layers).
 #[derive(Clone, Copy)]
-pub struct Scheme(pub &'static str);
+pub enum Scheme {
+    Http,
+    Https,
+}
+
+impl Scheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scheme::Http => "http",
+            Scheme::Https => "https",
+        }
+    }
+}
 
 /// Client IP address (injected by server layers).
 #[derive(Clone, Copy)]
 pub struct ClientAddr(pub IpAddr);
+
+/// Build the `X-Forwarded-For` value by appending the client IP to any existing chain.
+fn build_xff_value(existing: Option<&str>, client_ip: IpAddr) -> String {
+    match existing {
+        Some(chain) => format!("{}, {}", chain, client_ip),
+        None => client_ip.to_string(),
+    }
+}
 
 /// Check if request is a WebSocket upgrade
 fn is_websocket_upgrade(request: &Request) -> bool {
@@ -68,23 +89,28 @@ fn build_upgrade_request(
     req.push_str(&format!("X-Forwarded-Host: {}\r\n", host));
     req.push_str(&format!("X-Forwarded-Proto: {}\r\n", scheme));
     if let Some(ip) = client_ip {
-        let xff = match request
+        let existing = request
             .headers()
             .get(X_FORWARDED_FOR)
-            .and_then(|v| v.to_str().ok())
-        {
-            Some(existing) => format!("{}, {}", existing, ip),
-            None => ip.to_string(),
-        };
+            .and_then(|v| v.to_str().ok());
+        let xff = build_xff_value(existing, ip);
         req.push_str(&format!("X-Forwarded-For: {}\r\n", xff));
     }
 
-    // Copy remaining headers, skipping Host and forwarding headers we already set
+    // Copy remaining headers, skipping Host, forwarding headers, and hop-by-hop
+    // headers (RFC 7230 §6.1). Connection and Upgrade are kept because the
+    // backend needs them for the WebSocket handshake.
     for (name, value) in request.headers() {
         if name == header::HOST
             || name.as_str() == X_FORWARDED_HOST
             || name.as_str() == X_FORWARDED_PROTO
             || name.as_str() == X_FORWARDED_FOR
+            || name == header::PROXY_AUTHENTICATE
+            || name == header::PROXY_AUTHORIZATION
+            || name == header::TE
+            || name == header::TRAILER
+            || name == header::TRANSFER_ENCODING
+            || name.as_str() == KEEP_ALIVE
         {
             continue;
         }
@@ -147,7 +173,11 @@ async fn proxy_websocket(
 
     // Verify we got 101 Switching Protocols
     let response_str = String::from_utf8_lossy(&response_buf[..n]);
-    if !response_str.contains("101") {
+    let is_101 = response_str
+        .lines()
+        .next()
+        .is_some_and(|line| line.contains("101"));
+    if !is_101 {
         warn!(target = %target, "Backend rejected WebSocket upgrade");
         return (
             StatusCode::BAD_GATEWAY,
@@ -240,7 +270,13 @@ async fn proxy_websocket(
         builder = builder.header("Sec-WebSocket-Accept", key);
     }
 
-    builder.body(Body::empty()).unwrap()
+    builder.body(Body::empty()).unwrap_or_else(|_| {
+        (
+            StatusCode::BAD_GATEWAY,
+            "Failed to build WebSocket upgrade response",
+        )
+            .into_response()
+    })
 }
 
 /// Set `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` headers.
@@ -258,28 +294,23 @@ fn set_forwarding_headers(
         headers.insert(X_FORWARDED_PROTO, value);
     }
 
-    let xff = if let Some(ip) = client_ip {
-        let value = match headers.get(X_FORWARDED_FOR).and_then(|v| v.to_str().ok()) {
-            Some(existing) => format!("{}, {}", existing, ip),
-            None => ip.to_string(),
-        };
-        if let Ok(hv) = HeaderValue::from_str(&value) {
+    if let Some(ip) = client_ip {
+        let existing = headers.get(X_FORWARDED_FOR).and_then(|v| v.to_str().ok());
+        let xff = build_xff_value(existing, ip);
+        if let Ok(hv) = HeaderValue::from_str(&xff) {
             headers.insert(X_FORWARDED_FOR, hv);
         }
-        value
-    } else {
-        String::new()
-    };
+    }
 
     debug!(
         x_forwarded_host = %host,
         x_forwarded_proto = %scheme,
-        x_forwarded_for = %xff,
+        x_forwarded_for = ?client_ip,
         "Forwarding headers set"
     );
 }
 
-/// Remove hop-by-hop headers that must not be forwarded (RFC 2616 §13.5.1).
+/// Remove hop-by-hop headers that must not be forwarded (RFC 7230 §6.1).
 ///
 /// Also strips any extra headers listed in the `Connection` header value.
 fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
@@ -295,12 +326,13 @@ fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
         .unwrap_or_default();
 
     headers.remove(header::CONNECTION);
-    headers.remove("keep-alive");
+    headers.remove(KEEP_ALIVE);
     headers.remove(header::PROXY_AUTHENTICATE);
     headers.remove(header::PROXY_AUTHORIZATION);
     headers.remove(header::TE);
     headers.remove(header::TRAILER);
     headers.remove(header::TRANSFER_ENCODING);
+    headers.remove(header::UPGRADE);
 
     for name in connection_headers {
         headers.remove(&name);

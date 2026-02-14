@@ -92,9 +92,9 @@ roxy route list app.roxy
 
 When forwarding requests to a backend service, Roxy
 sets standard proxy headers and strips hop-by-hop headers
-per [RFC 2616 §13.5.1][rfc2616].
+per [RFC 7230 §6.1][rfc7230].
 
-[rfc2616]: https://www.rfc-editor.org/rfc/rfc2616#section-13.5.1
+[rfc7230]: https://www.rfc-editor.org/rfc/rfc7230#section-6.1
 
 ### Forwarding Headers
 
@@ -119,8 +119,8 @@ the forwarded request and the backend response:
 
 `Connection`, `Keep-Alive`, `Proxy-Authenticate`,
 `Proxy-Authorization`, `TE`, `Trailer`,
-`Transfer-Encoding`, plus any headers listed in the
-`Connection` header value.
+`Transfer-Encoding`, `Upgrade`, plus any headers
+listed in the `Connection` header value.
 
 These headers describe the connection between two
 adjacent nodes (client↔proxy or proxy↔backend) and

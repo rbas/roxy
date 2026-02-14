@@ -109,7 +109,7 @@ async fn handle_request(
         "Routing request"
     );
 
-    let proto = scheme.map(|Extension(s)| s.0).unwrap_or("http");
+    let proto = scheme.map(|Extension(s)| s.as_str()).unwrap_or("http");
     let client_ip = client_addr.map(|Extension(a)| a.0);
 
     // Route to appropriate backend based on target type
