@@ -8,6 +8,12 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::MacOsTrustStore;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
+#[cfg(target_os = "linux")]
+pub use linux::LinuxTrustStore;
+
 /// Trait for platform-specific trust store operations (CA-based trust)
 pub trait TrustStore {
     /// Add the Root CA to the system trust store
@@ -26,7 +32,12 @@ pub fn get_trust_store() -> Result<Box<dyn TrustStore>, CertError> {
     Ok(Box::new(MacOsTrustStore::new()))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+pub fn get_trust_store() -> Result<Box<dyn TrustStore>, CertError> {
+    Ok(Box::new(LinuxTrustStore::new()))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn get_trust_store() -> Result<Box<dyn TrustStore>, CertError> {
     Err(CertError::TrustStoreError(format!(
         "Unsupported platform: {}",

@@ -47,27 +47,40 @@ impl DnsServer {
 
         // Bind UDP sockets
         let udp_v4 = UdpSocket::bind(ipv4_addr).await?;
-        let udp_v6 = UdpSocket::bind(ipv6_addr).await?;
-
-        // Bind TCP listeners
         let tcp_v4 = TcpListener::bind(ipv4_addr).await?;
-        let tcp_v6 = TcpListener::bind(ipv6_addr).await?;
 
-        info!(
-            ipv4 = %ipv4_addr,
-            ipv6 = %ipv6_addr,
-            response_ip = %self.ip_resolver.lan_ip,
-            "DNS server listening"
-        );
+        // IPv6 binds may fail on Linux where the IPv4 dual-stack socket already
+        // covers both protocols. This is fine — we just skip IPv6-specific listeners.
+        let udp_v6 = UdpSocket::bind(ipv6_addr).await.ok();
+        let tcp_v6 = TcpListener::bind(ipv6_addr).await.ok();
+
+        if udp_v6.is_some() {
+            info!(
+                ipv4 = %ipv4_addr,
+                ipv6 = %ipv6_addr,
+                response_ip = %self.ip_resolver.lan_ip,
+                "DNS server listening"
+            );
+        } else {
+            info!(
+                ipv4 = %ipv4_addr,
+                response_ip = %self.ip_resolver.lan_ip,
+                "DNS server listening (IPv6 unavailable, using IPv4 dual-stack)"
+            );
+        }
 
         let ttl = self.ttl;
         let resolver = self.ip_resolver.clone();
 
         tokio::select! {
             r = serve_udp(udp_v4, ttl, resolver.clone()) => r,
-            r = serve_udp(udp_v6, ttl, resolver.clone()) => r,
             r = serve_tcp(tcp_v4, ttl, resolver.clone()) => r,
-            r = serve_tcp(tcp_v6, ttl, resolver) => r,
+            r = async {
+                if let Some(s) = udp_v6 { serve_udp(s, ttl, resolver.clone()).await } else { std::future::pending().await }
+            } => r,
+            r = async {
+                if let Some(s) = tcp_v6 { serve_tcp(s, ttl, resolver.clone()).await } else { std::future::pending().await }
+            } => r,
         }
     }
 }
