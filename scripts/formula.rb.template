@@ -13,12 +13,21 @@ class Roxy < Formula
     end
   end
 
+  on_linux do
+    if Hardware::CPU.intel?
+      url "__LINUX_URL__"
+      sha256 "__LINUX_SHA256__"
+    else
+      odie "Roxy on Linux currently only supports x86_64 (AMD64)."
+    end
+  end
+
   def install
     bin.install "roxy"
   end
 
   service do
-    name macos: "cz.rbas.roxy"
+    name macos: "cz.rbas.roxy", linux: "roxy"
     run [opt_bin/"roxy", "--config", "/etc/roxy/config.toml", "start", "--foreground"]
     keep_alive true
     require_root true
