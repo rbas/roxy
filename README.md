@@ -14,8 +14,8 @@ HTTPS for every local project.
 - ✓ Share work across devices
 - ✓ No nginx. No dnsmasq. No Docker. No YAML.
 
-> ⚠️ **Early Development**: Roxy is ready for daily use on macOS, but
-> things may shift around.
+> ⚠️ **Early Development**: Roxy is ready for daily use on macOS and Linux,
+> but things may shift around.
 > [Report issues here](https://github.com/rbas/roxy/issues).
 
 ---
@@ -37,6 +37,8 @@ HTTPS for every local project.
 
 ## Try It in 60 Seconds
 
+**Homebrew:**
+
 ```bash
 # 1. Install via Homebrew
 brew tap rbas/roxy
@@ -52,10 +54,13 @@ roxy register myapp.roxy --route "/=3000" --route "/api=3001"
 sudo roxy start
 
 # 5. Open in browser
-open https://myapp.roxy
+open https://myapp.roxy      # on macOS
+xdg-open https://myapp.roxy  # on linux
 ```
 
 > **Note:** After first install, restart your browser for the certificates to be recognized.
+> On Linux with snap browsers (Firefox, Chromium), see the
+> [Linux guide](docs/linux.md#snap-browsers-and-certificate-trust) for an extra one-time step.
 
 **That's it.** Trusted HTTPS, no warnings, no config files. Just works.
 
@@ -285,8 +290,8 @@ sudo brew services stop roxy
 
 1. **`roxy install`**
    - Creates a trusted Root Certificate Authority (CA)
-   - Adds it to your system keychain (so browsers trust it)
-   - Configures DNS to resolve `.roxy` domains to `127.0.0.1`
+   - Adds it to your system trust store (macOS Keychain / Linux ca-certificates)
+   - Configures DNS to resolve `.roxy` domains (macOS `/etc/resolver/` / Linux systemd-resolved)
    - **⚠️ Restart your browser** after first install for certificates to be recognized
 
 2. **`roxy register <domain>`**
@@ -307,7 +312,7 @@ signed by your Root CA. WebSockets work transparently. DNS queries for
 - Config, certs, and CA: `/etc/roxy/`
 - Logs: `/var/log/roxy/`
 - PID file: `/var/run/roxy.pid`
-- DNS configuration: `/etc/resolver/roxy` (macOS)
+- DNS: `/etc/resolver/roxy` (macOS) or `/etc/systemd/resolved.conf.d/roxy.conf` (Linux)
 - Run `roxy uninstall` to remove everything cleanly
 
 For configuration details, logging options, and file locations see the [full documentation](docs/README.md).
@@ -340,12 +345,12 @@ No `/etc/hosts`, no config files, no manual cert setup.
 
 ### Requirements
 
-- **macOS** (Monterey or later recommended)
-  - Linux support is planned! [Track progress here](https://github.com/rbas/roxy/issues)
+- **macOS** (Monterey or later) or **Linux** (Ubuntu 22.04+ / Debian 12+)
 - **Rust** toolchain (for building from source)
 - **sudo** access (needed for ports 80/443 and DNS configuration)
+- **Linux only:** `systemd-resolved` (default on Ubuntu)
 
-### Install via Homebrew (Recommended)
+### Install via Homebrew
 
 ```bash
 brew tap rbas/roxy
@@ -359,34 +364,24 @@ Download the latest binary for your platform from the [Releases page](https://gi
 **macOS (Apple Silicon):**
 
 ```bash
-# Download the latest release
 curl -LO https://github.com/rbas/roxy/releases/latest/download/roxy-macos-arm64.tar.gz
 tar -xzf roxy-macos-arm64.tar.gz
-
-# Install
 sudo mv roxy /usr/local/bin/
-
-# Verify installation
 roxy --version
 ```
 
 ### Install from Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/rbas/roxy.git
 cd roxy
-
-# Build and install
 cargo install --path .
-
-# Verify installation
 roxy --version
 ```
 
 ## What's Next
 
-Roxy is ready for daily development use on macOS. Recent additions and future plans:
+Roxy is ready for daily development use on macOS and Linux. Recent additions and future plans:
 
 - [x] **Pre-built binaries** — download and run without building from source
   (macOS ARM64)
@@ -396,8 +391,8 @@ Roxy is ready for daily development use on macOS. Recent additions and future pl
   for static file routes
 - [x] **Wildcard subdomains** — `*.myapp.roxy` patterns
   with automatic certificate generation
-- [ ] **Linux support** — extend to Linux development
-  environments
+- [x] **Linux support** — Ubuntu/Debian with systemd-resolved
+  DNS integration and system CA trust
 - [ ] **Docker network DNS** — resolve `.roxy` domains
   inside containers without `extra_hosts`
 
@@ -409,6 +404,7 @@ Have a feature idea?
 ## Documentation & Support
 
 - 📖 **Full documentation**: [docs/README.md](docs/README.md)
+- 🐧 **Linux guide**: [docs/linux.md](docs/linux.md)
 - 🐛 **Having issues?**: Check the [troubleshooting guide](docs/README.md#troubleshooting)
 - 💬 **Questions or feedback?**: [Open an issue](https://github.com/rbas/roxy/issues)
 

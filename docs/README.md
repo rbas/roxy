@@ -1,26 +1,30 @@
 # Roxy
 
-Roxy is a local development proxy for macOS that gives
-your projects custom `.roxy` domains with automatic HTTPS.
-It ships as a single binary with no external dependencies.
-Register a domain, point it at a port or directory, and
-open `https://myapp.roxy` in your browser.
+Roxy is a local development proxy for macOS and Linux that
+gives your projects custom `.roxy` domains with automatic
+HTTPS. It ships as a single binary with no external
+dependencies. Register a domain, point it at a port or
+directory, and open `https://myapp.roxy` in your browser.
+
+> **Linux users:** See [linux.md](linux.md) for
+> platform-specific setup details and troubleshooting.
 
 ## Quick Start
 
 ```bash
 # Initial setup — installs Root CA, configures DNS,
-# trusts the certificate in macOS Keychain
+# trusts the certificate in the system trust store
 sudo roxy install
 
 # Register a domain that proxies to localhost:3000
-roxy register myapp.roxy --route "/=3000"
+sudo roxy register myapp.roxy --route "/=3000"
 
 # Start the daemon (requires sudo for ports 80/443)
 sudo roxy start
 
 # Open in browser
-open https://myapp.roxy
+open https://myapp.roxy        # macOS
+xdg-open https://myapp.roxy   # Linux
 ```
 
 ## Commands Reference
@@ -262,19 +266,29 @@ navigate subdirectories
 └── roxy.log             # Daemon log file
 ```
 
-macOS DNS resolver file (created by `roxy install`):
+DNS configuration (created by `roxy install`):
+
+**macOS:**
 
 ```text
 /etc/resolver/roxy
 ```
 
-This tells macOS to resolve all `*.roxy` domains through
-the local DNS server.
+**Linux (systemd-resolved):**
+
+```text
+/etc/systemd/resolved.conf.d/roxy.conf
+```
+
+This tells the system to resolve all `*.roxy` domains
+through the local DNS server.
 
 All paths are configurable via the `[paths]` section in
 `config.toml` (see [Configuration](#configuration)).
 
-## Auto-Start with Homebrew
+## Auto-Start on Boot
+
+### macOS (Homebrew)
 
 If you installed Roxy via Homebrew, use `brew services`
 to start it automatically at boot:
@@ -289,6 +303,29 @@ sudo brew services stop roxy
 
 When managed by `brew services`, Roxy runs in foreground
 mode and launchd handles process supervision.
+
+### Linux (systemd)
+
+Create a systemd service file:
+
+```bash
+sudo tee /etc/systemd/system/roxy.service > /dev/null <<'EOF'
+[Unit]
+Description=Roxy local development proxy
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/roxy start --foreground
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now roxy
+```
 
 ## Daemon: Foreground vs Background
 
@@ -466,10 +503,15 @@ to access.
 ### Browser Shows "Not Secure" or Certificate Warnings
 
 **If you installed Roxy with your browser already open**, the browser won't
-immediately pick up the newly trusted Root CA from the system keychain.
+immediately pick up the newly trusted Root CA from the system trust store.
 
 **Solution:** Restart your browser completely after running `sudo roxy install`.
 Browsers cache the trusted certificate list at startup.
+
+**Linux with snap browsers:** Snap-packaged browsers (Firefox, Chromium)
+are sandboxed and cannot access the system trust store. See the
+[Linux guide](linux.md#snap-browsers-and-certificate-trust) for a one-time
+fix using `certutil`.
 
 ### Certificates Show Wrong Domain Name
 
@@ -495,8 +537,11 @@ sudo roxy start
 Verify DNS is working:
 
 ```bash
+# macOS
 dig myapp.roxy
-# Should show: myapp.roxy. 0 IN A 127.0.0.1
+
+# Linux
+resolvectl query myapp.roxy
 ```
 
 ### Port Already in Use
