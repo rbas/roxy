@@ -38,10 +38,7 @@ impl TrustStore for LinuxTrustStore {
         let output = Command::new("update-ca-certificates")
             .output()
             .map_err(|e| {
-                CertError::TrustStoreError(format!(
-                    "Failed to run update-ca-certificates: {}",
-                    e
-                ))
+                CertError::TrustStoreError(format!("Failed to run update-ca-certificates: {}", e))
             })?;
 
         if !output.status.success() {
