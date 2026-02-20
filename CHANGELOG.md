@@ -7,6 +7,22 @@ automatic HTTPS certificates. Think Laravel Valet, but written in Rust.
 All entries follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format,
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-20
+
+### Bug Fixes
+
+- Add X-Forwarded-For/Host/Proto headers and hop-by-hop stripping 
+
+### Documentation
+
+- Add caddy to the comparison table
+- Honest Caddy comparison and CLI-first messaging
+
+### Features
+
+- Add shell completion
+- Add support for Ubuntu/Debian 
+
 ## [0.4.0] - 2026-02-14
 
 ### Features
