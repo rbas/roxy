@@ -13,7 +13,10 @@ on:
 
 jobs:
   test:
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,7 +29,7 @@ jobs:
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "roxy-test"
+          shared-key: "roxy-test-${{ matrix.os }}"
           cache-on-failure: true
 
       - name: Run unit tests
@@ -35,17 +38,12 @@ jobs:
       - name: Run Clippy
         run: cargo clippy -- -D warnings
 
-  build:
+  build-macos:
     needs: test
     runs-on: macos-latest
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -53,7 +51,7 @@ jobs:
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "roxy-release"
+          shared-key: "roxy-release-macos"
           cache-on-failure: true
 
       - name: Extract version from tag
@@ -88,15 +86,122 @@ jobs:
           cat roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
           cat roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz.sha256
 
-      - name: Install git-cliff
-        run: brew install git-cliff
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: |
+            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64
+            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
+            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
+            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz.sha256
+
+  build-linux:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "roxy-release-linux"
+          cache-on-failure: true
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          # Strip 'v' prefix if present
+          VERSION=$(echo "$TAG" | sed 's/^v//')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Build release binary
+        run: cargo build --release --bin roxy
+
+      - name: Package binary
+        run: |
+          cd target/release
+          # Copy raw binary with versioned name for direct downloads
+          cp roxy roxy-${{ steps.version.outputs.version }}-linux-amd64
+          # Create tarball
+          tar -czf roxy-${{ steps.version.outputs.version }}-linux-amd64.tar.gz roxy
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd target/release
+          sha256sum roxy-${{ steps.version.outputs.version }}-linux-amd64 > roxy-${{ steps.version.outputs.version }}-linux-amd64.sha256
+          sha256sum roxy-${{ steps.version.outputs.version }}-linux-amd64.tar.gz > roxy-${{ steps.version.outputs.version }}-linux-amd64.tar.gz.sha256
+          cat roxy-${{ steps.version.outputs.version }}-linux-amd64.sha256
+          cat roxy-${{ steps.version.outputs.version }}-linux-amd64.tar.gz.sha256
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            target/release/roxy-${{ steps.version.outputs.version }}-linux-amd64
+            target/release/roxy-${{ steps.version.outputs.version }}-linux-amd64.sha256
+            target/release/roxy-${{ steps.version.outputs.version }}-linux-amd64.tar.gz
+            target/release/roxy-${{ steps.version.outputs.version }}-linux-amd64.tar.gz.sha256
+
+  release:
+    needs: [build-macos, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          # Strip 'v' prefix if present
+          VERSION=$(echo "$TAG" | sed 's/^v//')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          # Detect pre-release (version contains a hyphen, e.g. 0.5.0-beta.1)
+          if echo "$VERSION" | grep -q '-'; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-artifacts
+          path: artifacts/
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-artifacts
+          path: artifacts/
 
       - name: Generate changelog for this release
-        id: changelog
-        run: |
-          # Generate changelog for this specific tag
-          git cliff --tag ${{ steps.version.outputs.tag }} --unreleased --strip all > release_notes.md
-          cat release_notes.md
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --latest --strip all
+        env:
+          OUTPUT: release_notes.md
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
@@ -104,27 +209,37 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Roxy ${{ steps.version.outputs.version }}
           body_path: release_notes.md
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
           files: |
-            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64
-            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
-            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
-            target/release/roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz.sha256
+            artifacts/roxy-${{ steps.version.outputs.version }}-macos-arm64
+            artifacts/roxy-${{ steps.version.outputs.version }}-macos-arm64.sha256
+            artifacts/roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
+            artifacts/roxy-${{ steps.version.outputs.version }}-macos-arm64.tar.gz.sha256
+            artifacts/roxy-${{ steps.version.outputs.version }}-linux-amd64
+            artifacts/roxy-${{ steps.version.outputs.version }}-linux-amd64.sha256
+            artifacts/roxy-${{ steps.version.outputs.version }}-linux-amd64.tar.gz
+            artifacts/roxy-${{ steps.version.outputs.version }}-linux-amd64.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update Homebrew formula
+        if: steps.version.outputs.prerelease == 'false'
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          SHA256=$(shasum -a 256 target/release/roxy-${VERSION}-macos-arm64.tar.gz | awk '{print $1}')
+          SHA256=$(cat artifacts/roxy-${VERSION}-macos-arm64.tar.gz.sha256 | awk '{print $1}')
           URL="https://github.com/rbas/roxy/releases/download/v${VERSION}/roxy-${VERSION}-macos-arm64.tar.gz"
+          LINUX_SHA256=$(cat artifacts/roxy-${VERSION}-linux-amd64.tar.gz.sha256 | awk '{print $1}')
+          LINUX_URL="https://github.com/rbas/roxy/releases/download/v${VERSION}/roxy-${VERSION}-linux-amd64.tar.gz"
 
           git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/rbas/homebrew-roxy.git /tmp/homebrew-roxy
 
           sed -e "s|__VERSION__|${VERSION}|g" \
               -e "s|__URL__|${URL}|g" \
               -e "s|__SHA256__|${SHA256}|g" \
+              -e "s|__LINUX_URL__|${LINUX_URL}|g" \
+              -e "s|__LINUX_SHA256__|${LINUX_SHA256}|g" \
               scripts/formula.rb.template \
               > /tmp/homebrew-roxy/Formula/roxy.rb
 
