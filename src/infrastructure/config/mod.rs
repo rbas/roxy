@@ -238,6 +238,11 @@ impl ConfigStore {
         self.save(&config)
     }
 
+    /// Check whether the config file exists on disk.
+    pub fn config_exists(&self) -> bool {
+        self.path.exists()
+    }
+
     pub fn list_domains(&self) -> Result<Vec<DomainRegistration>, ConfigError> {
         let config = self.load()?;
         Ok(config

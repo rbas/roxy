@@ -56,21 +56,21 @@ mod linux;
 pub use linux::LinuxDnsService;
 
 /// Get the DNS service for the current platform
+#[cfg(target_os = "macos")]
 pub fn get_dns_service() -> Result<Box<dyn DnsService>, DnsError> {
-    #[cfg(target_os = "macos")]
-    {
-        Ok(Box::new(MacOsDnsService::new()))
-    }
+    Ok(Box::new(MacOsDnsService::new()))
+}
 
-    #[cfg(target_os = "linux")]
-    {
-        Ok(Box::new(LinuxDnsService::new()))
-    }
+/// Get the DNS service for the current platform
+#[cfg(target_os = "linux")]
+pub fn get_dns_service() -> Result<Box<dyn DnsService>, DnsError> {
+    Ok(Box::new(LinuxDnsService::new()))
+}
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        Err(DnsError::UnsupportedPlatform(
-            std::env::consts::OS.to_string(),
-        ))
-    }
+/// Get the DNS service for the current platform
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn get_dns_service() -> Result<Box<dyn DnsService>, DnsError> {
+    Err(DnsError::UnsupportedPlatform(
+        std::env::consts::OS.to_string(),
+    ))
 }

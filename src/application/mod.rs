@@ -1,6 +1,12 @@
+pub mod daemon_status;
 pub mod install;
+pub mod list_domains;
 pub mod manage_routes;
+pub mod ports;
 pub mod register_domain;
+pub mod restart_daemon;
+pub mod start_daemon;
+pub mod stop_daemon;
 pub mod uninstall;
 pub mod unregister_domain;
 

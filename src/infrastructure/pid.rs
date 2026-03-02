@@ -4,13 +4,20 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Duration;
 
+use super::process::ProcessControl;
+use super::process::get_process_control;
+
 pub struct PidFile {
     path: PathBuf,
+    process: Box<dyn ProcessControl>,
 }
 
 impl PidFile {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            process: get_process_control(),
+        }
     }
 
     /// Write current process PID to file
@@ -36,7 +43,7 @@ impl PidFile {
     /// Check if process with stored PID is running
     pub fn is_running(&self) -> Result<bool> {
         match self.read()? {
-            Some(pid) => Ok(process_exists(pid)),
+            Some(pid) => Ok(self.process.process_exists(pid)),
             None => Ok(false),
         }
     }
@@ -52,7 +59,7 @@ impl PidFile {
     /// Get stored PID if daemon is running
     pub fn get_running_pid(&self) -> Result<Option<u32>> {
         match self.read()? {
-            Some(pid) if process_exists(pid) => Ok(Some(pid)),
+            Some(pid) if self.process.process_exists(pid) => Ok(Some(pid)),
             _ => Ok(None),
         }
     }
@@ -67,38 +74,7 @@ impl PidFile {
             None => return Ok(()),
         };
 
-        terminate_process(pid, timeout)?;
+        self.process.terminate(pid, timeout)?;
         self.remove()
     }
-}
-
-/// Send SIGTERM, wait, then SIGKILL if still running.
-#[cfg(unix)]
-fn terminate_process(pid: u32, timeout: Duration) -> Result<()> {
-    use std::process::Command;
-
-    Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .output()?;
-
-    std::thread::sleep(timeout);
-
-    if process_exists(pid) {
-        Command::new("kill")
-            .args(["-KILL", &pid.to_string()])
-            .output()?;
-    }
-
-    Ok(())
-}
-
-/// Check if a process exists (Unix-specific)
-#[cfg(unix)]
-fn process_exists(pid: u32) -> bool {
-    use std::process::Command;
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }

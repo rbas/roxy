@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::application::StepOutcome;
 use crate::application::unregister_domain::UnregisterDomain;
 use crate::domain::DomainPattern;
+use crate::infrastructure::adapters::{CertificateAdapter, DomainRepositoryAdapter};
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::paths::RoxyPaths;
@@ -20,7 +21,9 @@ pub fn execute(
 
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let cert_service = CertificateService::new(paths);
-    let use_case = UnregisterDomain::new(&config_store, &cert_service);
+    let repo = DomainRepositoryAdapter::new(&config_store);
+    let certs = CertificateAdapter::new(&cert_service);
+    let use_case = UnregisterDomain::new(&repo, &certs);
 
     if !force {
         let registration = use_case.preview(&pattern)?;

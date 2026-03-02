@@ -1,15 +1,11 @@
 use std::net::Ipv4Addr;
-use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
-use crate::infrastructure::certs::CertificateService;
-use crate::infrastructure::config::{Config, ConfigStore};
-use crate::infrastructure::dns::get_dns_service;
-use crate::infrastructure::network::get_lan_ip;
-use crate::infrastructure::paths::RoxyPaths;
+use crate::infrastructure::config::Config;
 
 use super::StepOutcome;
+use super::ports::{CertificateManager, ConfigLoader, DnsManager, NetworkInfo, SystemSetup};
 
 /// Result of the install operation.
 pub struct InstallResult {
@@ -19,33 +15,36 @@ pub struct InstallResult {
 
 /// Use case: initial setup — create directories, root CA, DNS.
 pub struct Install<'a> {
-    config_store: &'a ConfigStore,
-    cert_service: &'a CertificateService,
-    config_path: &'a Path,
-    paths: &'a RoxyPaths,
+    certs: &'a dyn CertificateManager,
+    config_loader: &'a dyn ConfigLoader,
+    dns: &'a dyn DnsManager,
+    network: &'a dyn NetworkInfo,
+    system: &'a dyn SystemSetup,
     config: &'a Config,
 }
 
 impl<'a> Install<'a> {
     pub fn new(
-        config_store: &'a ConfigStore,
-        cert_service: &'a CertificateService,
-        config_path: &'a Path,
-        paths: &'a RoxyPaths,
+        certs: &'a dyn CertificateManager,
+        config_loader: &'a dyn ConfigLoader,
+        dns: &'a dyn DnsManager,
+        network: &'a dyn NetworkInfo,
+        system: &'a dyn SystemSetup,
         config: &'a Config,
     ) -> Self {
         Self {
-            config_store,
-            cert_service,
-            config_path,
-            paths,
+            certs,
+            config_loader,
+            dns,
+            network,
+            system,
             config,
         }
     }
 
     pub fn execute(&self) -> Result<InstallResult> {
         let mut steps: Vec<(String, StepOutcome)> = Vec::new();
-        let lan_ip = get_lan_ip();
+        let lan_ip = self.network.lan_ip().unwrap_or(Ipv4Addr::LOCALHOST);
         let dns_port = self.config.daemon.dns_port;
 
         self.create_directories(&mut steps)?;
@@ -57,25 +56,7 @@ impl<'a> Install<'a> {
     }
 
     fn create_directories(&self, steps: &mut Vec<(String, StepOutcome)>) -> Result<()> {
-        std::fs::create_dir_all(&self.paths.data_dir).with_context(|| {
-            format!(
-                "Failed to create data directory: {}",
-                self.paths.data_dir.display()
-            )
-        })?;
-        std::fs::create_dir_all(&self.paths.certs_dir).with_context(|| {
-            format!(
-                "Failed to create certs directory: {}",
-                self.paths.certs_dir.display()
-            )
-        })?;
-
-        if let Some(log_dir) = self.paths.log_file.parent() {
-            std::fs::create_dir_all(log_dir).with_context(|| {
-                format!("Failed to create log directory: {}", log_dir.display())
-            })?;
-        }
-
+        self.system.create_directories()?;
         steps.push((
             "Create directories".into(),
             StepOutcome::Success("Data and log directories ready.".into()),
@@ -84,14 +65,11 @@ impl<'a> Install<'a> {
     }
 
     fn ensure_config_file(&self, steps: &mut Vec<(String, StepOutcome)>) -> Result<()> {
-        if !self.config_path.exists() {
-            self.config_store.save(self.config)?;
+        if !self.config_loader.exists() {
+            self.config_loader.save(self.config)?;
             steps.push((
                 "Config file".into(),
-                StepOutcome::Success(format!(
-                    "Created config file: {}",
-                    self.config_path.display()
-                )),
+                StepOutcome::Success("Created config file.".into()),
             ));
         } else {
             steps.push((
@@ -103,9 +81,9 @@ impl<'a> Install<'a> {
     }
 
     fn init_root_ca(&self, steps: &mut Vec<(String, StepOutcome)>) {
-        let ca_outcome = match self.cert_service.is_ca_installed() {
+        let ca_outcome = match self.certs.is_ca_installed() {
             Ok(true) => StepOutcome::Skipped("Root CA already installed.".into()),
-            _ => match self.cert_service.init_ca() {
+            _ => match self.certs.init_ca() {
                 Ok(()) => StepOutcome::Success(
                     "Root CA created and installed in system trust store.".into(),
                 ),
@@ -121,16 +99,15 @@ impl<'a> Install<'a> {
     }
 
     fn configure_dns(&self, dns_port: u16, steps: &mut Vec<(String, StepOutcome)>) -> Result<()> {
-        let dns = get_dns_service()?;
-        let dns_outcome = if dns.is_configured() {
+        let dns_outcome = if self.dns.is_configured() {
             StepOutcome::Skipped("DNS already configured.".into())
         } else {
-            dns.setup(dns_port)?;
+            self.dns.setup(dns_port)?;
             StepOutcome::Success("DNS configured successfully.".into())
         };
         steps.push(("DNS configuration".into(), dns_outcome));
 
-        dns.validate()?;
+        self.dns.validate()?;
         steps.push((
             "DNS validation".into(),
             StepOutcome::Success("DNS validation passed.".into()),
