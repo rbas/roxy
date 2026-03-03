@@ -12,9 +12,10 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
 use tokio_rustls::TlsAcceptor;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::domain::{DomainName, DomainPattern};
+use crate::infrastructure::certs::CertificateGenerator;
 use crate::infrastructure::certs::generator::{build_ca_cert_params, build_leaf_cert_params};
 
 const ON_DEMAND_CERT_CACHE_MAX: usize = 256;
@@ -98,13 +99,27 @@ pub fn create_tls_acceptor(
 
     let mut certs: Vec<(DomainPattern, Arc<CertifiedKey>)> = Vec::new();
 
+    let generator = CertificateGenerator::new(data_dir.to_path_buf(), certs_dir.to_path_buf());
+
     for pattern in patterns {
         let stem = pattern.cert_name();
         let cert_path = certs_dir.join(format!("{}.crt", stem));
         let key_path = certs_dir.join(format!("{}.key", stem));
 
         if !cert_path.exists() || !key_path.exists() {
-            anyhow::bail!("No certificate found for {}", pattern);
+            info!(domain = %pattern, "Certificate missing, generating automatically");
+            match generator.generate(pattern) {
+                Ok(cert) => {
+                    if let Err(e) = generator.save(&cert) {
+                        warn!(domain = %pattern, error = %e, "Failed to save auto-generated certificate, skipping HTTPS for this domain");
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    warn!(domain = %pattern, error = %e, "Failed to auto-generate certificate, skipping HTTPS for this domain");
+                    continue;
+                }
+            }
         }
 
         let loaded_certs = load_certs(&cert_path)?;
