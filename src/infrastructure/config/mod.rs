@@ -3,6 +3,7 @@ mod dto;
 // Re-export shared config types so existing CLI/daemon code keeps compiling.
 pub use crate::config::{DaemonConfig, RoxyPaths};
 
+use crate::application::ports::{ConfigLoadError, ConfigLoader, DomainRepository, RepositoryError};
 use crate::domain::{DomainPattern, DomainRegistration};
 use dto::RegistrationDto;
 use std::collections::HashMap;
@@ -172,6 +173,63 @@ impl ConfigStore {
             .into_values()
             .map(DomainRegistration::from)
             .collect())
+    }
+}
+
+fn map_config_error(e: ConfigError) -> ConfigLoadError {
+    match e {
+        ConfigError::InvalidConfig(msg) => ConfigLoadError::Invalid(msg),
+        other => ConfigLoadError::IoFailed(other.into()),
+    }
+}
+
+impl ConfigLoader for ConfigStore {
+    fn load(&self) -> Result<(DaemonConfig, RoxyPaths), ConfigLoadError> {
+        let config = ConfigStore::load(self).map_err(map_config_error)?;
+        Ok((config.daemon, config.paths))
+    }
+
+    fn save_defaults(&self) -> Result<(), ConfigLoadError> {
+        let config = Config::default();
+        self.save(&config).map_err(map_config_error)
+    }
+
+    fn exists(&self) -> bool {
+        self.config_exists()
+    }
+}
+
+impl DomainRepository for ConfigStore {
+    fn get(&self, pattern: &DomainPattern) -> Result<Option<DomainRegistration>, RepositoryError> {
+        self.get_domain(pattern)
+            .map_err(|e| RepositoryError::StorageFailed(e.into()))
+    }
+
+    fn list(&self) -> Result<Vec<DomainRegistration>, RepositoryError> {
+        self.list_domains()
+            .map_err(|e| RepositoryError::StorageFailed(e.into()))
+    }
+
+    fn add(&self, registration: DomainRegistration) -> Result<(), RepositoryError> {
+        self.add_domain(registration).map_err(|e| match e {
+            ConfigError::DomainExists(d) => RepositoryError::DomainExists(d),
+            other => RepositoryError::StorageFailed(other.into()),
+        })
+    }
+
+    fn update(&self, registration: DomainRegistration) -> Result<(), RepositoryError> {
+        self.update_domain(registration).map_err(|e| match e {
+            ConfigError::DomainNotFound(d) => RepositoryError::DomainNotFound(d),
+            other => RepositoryError::StorageFailed(other.into()),
+        })
+    }
+
+    fn remove(&self, pattern: &DomainPattern) -> Result<(), RepositoryError> {
+        self.remove_domain(pattern).map_err(|e| match e {
+            ConfigError::DomainNotFound(d) => RepositoryError::DomainNotFound(d),
+            other => RepositoryError::StorageFailed(other.into()),
+        })?;
+        Ok(())
     }
 }
 

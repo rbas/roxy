@@ -3,19 +3,18 @@ use std::fs;
 use crate::application::ports::SystemSetup;
 use crate::infrastructure::paths::RoxyPaths;
 
-/// Adapter that bridges [`RoxyPaths`] filesystem operations to the
-/// [`SystemSetup`] port.
-pub struct SystemSetupAdapter<'a> {
+/// Infrastructure service for filesystem operations required by Roxy.
+pub struct FileSystemSetup<'a> {
     paths: &'a RoxyPaths,
 }
 
-impl<'a> SystemSetupAdapter<'a> {
+impl<'a> FileSystemSetup<'a> {
     pub fn new(paths: &'a RoxyPaths) -> Self {
         Self { paths }
     }
 }
 
-impl SystemSetup for SystemSetupAdapter<'_> {
+impl SystemSetup for FileSystemSetup<'_> {
     fn create_directories(&self) -> anyhow::Result<()> {
         fs::create_dir_all(&self.paths.data_dir).map_err(|e| {
             anyhow::anyhow!(

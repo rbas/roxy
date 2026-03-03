@@ -4,12 +4,10 @@ use anyhow::Result;
 
 use crate::application::StepOutcome;
 use crate::application::install::Install;
-use crate::infrastructure::adapters::{
-    CertificateAdapter, ConfigLoaderAdapter, DnsAdapter, NetworkInfoAdapter, SystemSetupAdapter,
-};
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::{Config, ConfigStore};
 use crate::infrastructure::dns::get_dns_service;
+use crate::infrastructure::filesystem::FileSystemSetup;
 use crate::infrastructure::network::get_network_info;
 use crate::infrastructure::paths::RoxyPaths;
 
@@ -19,18 +17,14 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths, config: &Config) -> Result
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let cert_service = CertificateService::new(paths);
     let dns_service = get_dns_service()?;
-
-    let certs = CertificateAdapter::new(&cert_service);
-    let config_loader = ConfigLoaderAdapter::new(&config_store);
-    let dns = DnsAdapter::new(dns_service);
-    let network = NetworkInfoAdapter::new(get_network_info());
-    let system = SystemSetupAdapter::new(paths);
+    let network_info = get_network_info();
+    let system = FileSystemSetup::new(paths);
 
     let use_case = Install::new(
-        &certs,
-        &config_loader,
-        &dns,
-        &network,
+        &cert_service,
+        &config_store,
+        &dns_service,
+        &network_info,
         &system,
         config.daemon.dns_port,
     );

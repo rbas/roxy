@@ -4,13 +4,10 @@ use anyhow::Result;
 
 use crate::application::StepOutcome;
 use crate::application::uninstall::Uninstall;
-use crate::infrastructure::adapters::{
-    CertificateAdapter, DaemonControlAdapter, DnsAdapter, DomainRepositoryAdapter,
-    SystemSetupAdapter,
-};
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::dns::get_dns_service;
+use crate::infrastructure::filesystem::FileSystemSetup;
 use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
 
@@ -19,18 +16,13 @@ pub fn execute(force: bool, config_path: &Path, paths: &RoxyPaths) -> Result<()>
     let cert_service = CertificateService::new(paths);
     let pid_file = PidFile::new(paths.pid_file.clone());
     let dns_service = get_dns_service()?;
-
-    let repo = DomainRepositoryAdapter::new(&config_store);
-    let certs = CertificateAdapter::new(&cert_service);
-    let daemon = DaemonControlAdapter::new(&pid_file);
-    let dns = DnsAdapter::new(dns_service);
-    let system = SystemSetupAdapter::new(paths);
+    let system = FileSystemSetup::new(paths);
 
     let use_case = Uninstall::new(
-        &repo,
-        &certs,
-        &daemon,
-        &dns,
+        &config_store,
+        &cert_service,
+        &pid_file,
+        &dns_service,
         &system,
         paths.data_dir.display().to_string(),
     );

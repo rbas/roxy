@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 
-use super::NetworkInfo;
+use crate::application::ports::NetworkInfo;
 
 pub struct MacOsNetworkInfo;
 

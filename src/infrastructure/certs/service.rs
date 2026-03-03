@@ -1,6 +1,7 @@
 use super::ca::RootCA;
 use super::trust_store::{TrustStore, get_trust_store};
 use super::{CertError, CertificateGenerator};
+use crate::application::ports::{CertificateError, CertificateManager};
 use crate::domain::DomainPattern;
 use crate::infrastructure::paths::RoxyPaths;
 
@@ -82,5 +83,39 @@ impl CertificateService {
         trust_store.remove_ca()?;
         self.ca.delete()?;
         Ok(())
+    }
+}
+
+impl CertificateManager for CertificateService {
+    fn init_ca(&self) -> Result<(), CertificateError> {
+        CertificateService::init_ca(self).map_err(|e| CertificateError::OperationFailed(e.into()))
+    }
+
+    fn is_ca_installed(&self) -> Result<bool, CertificateError> {
+        CertificateService::is_ca_installed(self)
+            .map_err(|e| CertificateError::OperationFailed(e.into()))
+    }
+
+    fn create_and_install(&self, pattern: &DomainPattern) -> Result<(), CertificateError> {
+        CertificateService::create_and_install(self, pattern)
+            .map_err(|e| CertificateError::OperationFailed(e.into()))
+    }
+
+    fn remove(&self, pattern: &DomainPattern) -> Result<(), CertificateError> {
+        CertificateService::remove(self, pattern)
+            .map_err(|e| CertificateError::OperationFailed(e.into()))
+    }
+
+    fn remove_ca(&self) -> Result<(), CertificateError> {
+        CertificateService::remove_ca(self).map_err(|e| CertificateError::OperationFailed(e.into()))
+    }
+
+    fn exists(&self, pattern: &DomainPattern) -> bool {
+        CertificateService::exists(self, pattern)
+    }
+
+    fn is_trusted(&self) -> Result<bool, CertificateError> {
+        CertificateService::is_trusted(self)
+            .map_err(|e| CertificateError::OperationFailed(e.into()))
     }
 }

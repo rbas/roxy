@@ -1,10 +1,6 @@
 use std::net::Ipv4Addr;
 
-/// Platform-agnostic network information provider.
-pub trait NetworkInfo {
-    /// Get the primary LAN IPv4 address, if available.
-    fn lan_ip(&self) -> Option<Ipv4Addr>;
-}
+use crate::application::ports::NetworkInfo;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -52,7 +48,7 @@ pub fn get_lan_ip() -> Ipv4Addr {
 
 /// Fallback for unsupported platforms — always returns None.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-struct FallbackNetworkInfo;
+pub struct FallbackNetworkInfo;
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 impl NetworkInfo for FallbackNetworkInfo {

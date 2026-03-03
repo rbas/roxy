@@ -6,7 +6,6 @@ use std::process::{Command, Stdio};
 
 use crate::application::start_daemon::StartDaemon;
 use crate::config::DaemonConfig;
-use crate::infrastructure::adapters::DaemonControlAdapter;
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
@@ -19,8 +18,7 @@ pub fn execute(
     daemon_config: &DaemonConfig,
 ) -> Result<()> {
     let pid_file = PidFile::new(paths.pid_file.clone());
-    let daemon = DaemonControlAdapter::new(&pid_file);
-    let service = StartDaemon::new(&daemon, daemon_config);
+    let service = StartDaemon::new(&pid_file, daemon_config);
     let ready = service.preflight()?;
 
     if foreground {

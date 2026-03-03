@@ -4,7 +4,6 @@ use anyhow::Result;
 
 use crate::application::list_domains::ListDomains;
 use crate::domain::RouteTarget;
-use crate::infrastructure::adapters::{CertificateAdapter, DomainRepositoryAdapter};
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::paths::RoxyPaths;
@@ -12,10 +11,8 @@ use crate::infrastructure::paths::RoxyPaths;
 pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let cert_service = CertificateService::new(paths);
-    let repo = DomainRepositoryAdapter::new(&config_store);
-    let certs = CertificateAdapter::new(&cert_service);
 
-    let use_case = ListDomains::new(&repo, &certs);
+    let use_case = ListDomains::new(&config_store, &cert_service);
     let domains = use_case.execute()?;
 
     if domains.is_empty() {

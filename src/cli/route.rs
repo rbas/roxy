@@ -4,7 +4,6 @@ use anyhow::Result;
 
 use crate::application::manage_routes::ManageRoutes;
 use crate::domain::{DomainPattern, PathPrefix, RouteTarget};
-use crate::infrastructure::adapters::DomainRepositoryAdapter;
 use crate::infrastructure::config::ConfigStore;
 
 /// Add a route to an existing domain
@@ -21,8 +20,7 @@ pub fn add(
         .map_err(|e| anyhow::anyhow!("Invalid target '{}': {}", target, e))?;
 
     let config_store = ConfigStore::new(config_path.to_path_buf());
-    let repo = DomainRepositoryAdapter::new(&config_store);
-    let use_case = ManageRoutes::new(&repo);
+    let use_case = ManageRoutes::new(&config_store);
 
     let route = use_case.add_route(&pattern, path_prefix, route_target)?;
 
@@ -38,8 +36,7 @@ pub fn remove(domain: String, wildcard: bool, path: String, config_path: &Path) 
     let path_prefix = PathPrefix::new(&path)?;
 
     let config_store = ConfigStore::new(config_path.to_path_buf());
-    let repo = DomainRepositoryAdapter::new(&config_store);
-    let use_case = ManageRoutes::new(&repo);
+    let use_case = ManageRoutes::new(&config_store);
 
     use_case.remove_route(&pattern, &path_prefix)?;
 
@@ -54,8 +51,7 @@ pub fn list(domain: String, wildcard: bool, config_path: &Path) -> Result<()> {
     let pattern = DomainPattern::from_name(&domain, wildcard)?;
 
     let config_store = ConfigStore::new(config_path.to_path_buf());
-    let repo = DomainRepositoryAdapter::new(&config_store);
-    let use_case = ManageRoutes::new(&repo);
+    let use_case = ManageRoutes::new(&config_store);
 
     let registration = use_case.list_routes(&pattern)?;
 

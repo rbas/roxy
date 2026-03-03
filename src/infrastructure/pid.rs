@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Duration;
 
-use super::process::ProcessControl;
 use super::process::PlatformProcessControl;
+use super::process::ProcessControl;
 use super::process::get_process_control;
+use crate::application::ports::DaemonControl;
 
 pub struct PidFile {
     path: PathBuf,
@@ -77,5 +78,19 @@ impl PidFile {
 
         self.process.terminate(pid, timeout)?;
         self.remove()
+    }
+}
+
+impl DaemonControl for PidFile {
+    fn is_running(&self) -> Result<bool> {
+        PidFile::is_running(self)
+    }
+
+    fn get_running_pid(&self) -> Result<Option<u32>> {
+        PidFile::get_running_pid(self)
+    }
+
+    fn stop_gracefully(&self, timeout: Duration) -> Result<()> {
+        PidFile::stop_gracefully(self, timeout)
     }
 }

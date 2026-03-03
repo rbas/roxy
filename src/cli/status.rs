@@ -3,9 +3,6 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::application::daemon_status::QueryDaemonStatus;
-use crate::infrastructure::adapters::{
-    CertificateAdapter, DaemonControlAdapter, DomainRepositoryAdapter, NetworkInfoAdapter,
-};
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::network::get_network_info;
@@ -16,13 +13,9 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
     let pid_file = PidFile::new(paths.pid_file.clone());
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let cert_service = CertificateService::new(paths);
+    let network_info = get_network_info();
 
-    let daemon = DaemonControlAdapter::new(&pid_file);
-    let repo = DomainRepositoryAdapter::new(&config_store);
-    let certs = CertificateAdapter::new(&cert_service);
-    let network = NetworkInfoAdapter::new(get_network_info());
-
-    let service = QueryDaemonStatus::new(&daemon, &repo, &certs, &network);
+    let service = QueryDaemonStatus::new(&pid_file, &config_store, &cert_service, &network_info);
     let status = service.execute()?;
 
     let offline_note = if status.lan_ip.is_loopback() {
