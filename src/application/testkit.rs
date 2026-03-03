@@ -11,9 +11,34 @@ use crate::config::{DaemonConfig, RoxyPaths};
 use crate::domain::{DomainPattern, DomainRegistration};
 
 use super::ports::{
-    CertificateError, CertificateManager, ConfigLoadError, ConfigLoader, DaemonControl,
-    DnsConfigError, DnsManager, DomainRepository, NetworkInfo, RepositoryError, SystemSetup,
+    CertificateError, CertificateManager, ConfigLoadError, ConfigLoader, DaemonConnection,
+    DaemonConnectionError, DaemonControl, DaemonStatus, DnsConfigError, DnsManager,
+    DomainRepository, NetworkInfo, RegistrationProvider, RepositoryError, SystemSetup,
 };
+
+// ---------------------------------------------------------------------------
+// InMemoryRegistrationProvider
+// ---------------------------------------------------------------------------
+
+pub struct InMemoryRegistrationProvider {
+    registrations: Vec<DomainRegistration>,
+}
+
+impl InMemoryRegistrationProvider {
+    pub fn new(registrations: Vec<DomainRegistration>) -> Self {
+        Self { registrations }
+    }
+}
+
+impl RegistrationProvider for InMemoryRegistrationProvider {
+    fn name(&self) -> &str {
+        "in-memory"
+    }
+
+    fn load(&self) -> anyhow::Result<Vec<DomainRegistration>> {
+        Ok(self.registrations.clone())
+    }
+}
 
 // ---------------------------------------------------------------------------
 // InMemoryDomainRepository
@@ -375,5 +400,49 @@ impl SystemSetup for InMemorySystemSetup {
         let existed = *self.log_exists.borrow();
         *self.log_exists.borrow_mut() = false;
         existed
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InMemoryDaemonConnection
+// ---------------------------------------------------------------------------
+
+pub struct InMemoryDaemonConnection {
+    registrations: RefCell<Vec<DomainRegistration>>,
+    pid: u32,
+    http_port: u16,
+    https_port: u16,
+    dns_port: u16,
+}
+
+impl InMemoryDaemonConnection {
+    pub fn new(registrations: Vec<DomainRegistration>) -> Self {
+        Self {
+            registrations: RefCell::new(registrations),
+            pid: 1234,
+            http_port: 80,
+            https_port: 443,
+            dns_port: 1053,
+        }
+    }
+}
+
+impl DaemonConnection for InMemoryDaemonConnection {
+    fn status(&self) -> Result<DaemonStatus, DaemonConnectionError> {
+        Ok(DaemonStatus {
+            pid: self.pid,
+            registrations: self.registrations.borrow().clone(),
+            http_port: self.http_port,
+            https_port: self.https_port,
+            dns_port: self.dns_port,
+        })
+    }
+
+    fn reload(&self) -> Result<(), DaemonConnectionError> {
+        Ok(())
+    }
+
+    fn list_registrations(&self) -> Result<Vec<DomainRegistration>, DaemonConnectionError> {
+        Ok(self.registrations.borrow().clone())
     }
 }

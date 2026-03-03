@@ -93,6 +93,10 @@ fn default_certs_dir() -> PathBuf {
     PathBuf::from("/etc/roxy/certs")
 }
 
+fn default_socket_path() -> PathBuf {
+    PathBuf::from("/etc/roxy/roxy.sock")
+}
+
 /// All resolved paths needed by Roxy components.
 /// Loaded once from config, then passed to components via DI.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -108,6 +112,9 @@ pub struct RoxyPaths {
 
     #[serde(default = "default_certs_dir")]
     pub certs_dir: PathBuf,
+
+    #[serde(default = "default_socket_path")]
+    pub socket_path: PathBuf,
 }
 
 impl Default for RoxyPaths {
@@ -117,6 +124,7 @@ impl Default for RoxyPaths {
             pid_file: default_pid_file(),
             log_file: default_log_file(),
             certs_dir: default_certs_dir(),
+            socket_path: default_socket_path(),
         }
     }
 }

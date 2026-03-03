@@ -1,6 +1,8 @@
+pub mod config_watcher;
 pub mod dns_server;
 pub mod embedded_assets;
 pub mod lifecycle;
+pub mod mgmt_socket;
 pub mod proxy;
 pub mod router;
 pub mod server;
