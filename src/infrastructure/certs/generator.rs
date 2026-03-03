@@ -130,21 +130,12 @@ impl CertificateGenerator {
         })?;
 
         // Set key file permissions to 0600 (owner read/write only)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&key_path)
-                .map_err(|e| CertError::WriteError {
-                    path: key_path.clone(),
-                    source: e,
-                })?
-                .permissions();
-            perms.set_mode(0o600);
-            fs::set_permissions(&key_path, perms).map_err(|e| CertError::WriteError {
+        crate::infrastructure::file_security::restrict_key_permissions(&key_path).map_err(|e| {
+            CertError::WriteError {
                 path: key_path.clone(),
                 source: e,
-            })?;
-        }
+            }
+        })?;
 
         Ok(())
     }

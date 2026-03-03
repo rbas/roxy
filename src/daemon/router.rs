@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use axum::{
     Extension, Router,
     extract::{Request, State},
@@ -9,20 +10,20 @@ use axum::{
 };
 use tracing::{debug, info};
 
-use crate::domain::{DomainRegistration, RouteTarget};
+use crate::domain::{DomainRegistration, Route, RouteTarget};
 
 use super::embedded_assets;
 use super::proxy::{ClientAddr, Scheme, proxy_request};
 use super::static_files::serve_static;
 use super::theme;
 
-/// Shared state for the router
-pub struct AppState {
+/// Immutable snapshot of daemon state. Swapped atomically via `SharedState`.
+pub struct RuntimeState {
     /// All registrations sorted by pattern specificity (most specific first).
     registrations: Vec<DomainRegistration>,
 }
 
-impl AppState {
+impl RuntimeState {
     pub fn new(mut registrations: Vec<DomainRegistration>) -> Self {
         // Most-specific first: longer base domain wins.
         // At equal specificity, exact patterns come before wildcards.
@@ -45,6 +46,58 @@ impl AppState {
             .iter()
             .find(|r| r.pattern().matches_hostname(&domain))
     }
+
+    pub fn registrations(&self) -> &[DomainRegistration] {
+        &self.registrations
+    }
+}
+
+/// Shared, atomically-swappable runtime state. Lock-free reads.
+pub type SharedState = Arc<ArcSwap<RuntimeState>>;
+
+/// Pure result of resolving a request to a route. No I/O.
+#[derive(Debug)]
+pub enum RouteResolution<'a> {
+    Matched {
+        registration: &'a DomainRegistration,
+        route: &'a Route,
+    },
+    MissingHost,
+    DomainNotRegistered {
+        host: String,
+    },
+    NoRouteForPath {
+        registration: &'a DomainRegistration,
+        host: String,
+        path: String,
+    },
+}
+
+/// Pure route resolution — no I/O, no async.
+pub fn resolve_route<'a>(
+    state: &'a RuntimeState,
+    host_header: Option<&str>,
+    path: &str,
+) -> RouteResolution<'a> {
+    let host = match host_header {
+        Some(h) => h.to_string(),
+        None => return RouteResolution::MissingHost,
+    };
+    let registration = match state.get_domain(&host) {
+        Some(r) => r,
+        None => return RouteResolution::DomainNotRegistered { host },
+    };
+    match registration.match_route(path) {
+        Some(route) => RouteResolution::Matched {
+            registration,
+            route,
+        },
+        None => RouteResolution::NoRouteForPath {
+            registration,
+            host,
+            path: path.to_string(),
+        },
+    }
 }
 
 /// Extract host from request headers
@@ -57,7 +110,7 @@ fn get_host(request: &Request) -> Option<String> {
 }
 
 /// Create the main router
-pub fn create_router(state: Arc<AppState>) -> Router {
+pub fn create_router(state: SharedState) -> Router {
     Router::new()
         .route("/{*path}", any(handle_request))
         .route("/", any(handle_request))
@@ -66,69 +119,70 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
 /// Handle all incoming requests
 async fn handle_request(
-    State(state): State<Arc<AppState>>,
+    State(shared): State<SharedState>,
     scheme: Option<Extension<Scheme>>,
     client_addr: Option<Extension<ClientAddr>>,
     request: Request,
 ) -> Response {
+    let state = shared.load();
     let method = request.method().clone();
     let uri = request.uri().clone();
-
-    // Extract host from request
-    let host = match get_host(&request) {
-        Some(h) => h,
-        None => {
-            return (StatusCode::BAD_REQUEST, "Missing Host header").into_response();
-        }
-    };
-
-    // Look up the domain
-    let registration = match state.get_domain(&host) {
-        Some(r) => r,
-        None => {
-            info!(host = %host, "Domain not registered");
-            return build_not_registered_response(&host);
-        }
-    };
-
-    // Match route by path (longest prefix wins)
+    let host_header = get_host(&request);
     let path = uri.path();
-    let route = match registration.match_route(path) {
-        Some(r) => r,
-        None => {
+
+    match resolve_route(&state, host_header.as_deref(), path) {
+        RouteResolution::MissingHost => {
+            (StatusCode::BAD_REQUEST, "Missing Host header").into_response()
+        }
+        RouteResolution::DomainNotRegistered { host } => {
+            info!(host = %host, "Domain not registered");
+            build_not_registered_response(&host)
+        }
+        RouteResolution::NoRouteForPath {
+            registration,
+            host,
+            path,
+        } => {
             info!(host = %host, path = %path, "No route found");
-            return build_no_route_response(registration, &host, path);
+            build_no_route_response(registration, &host, &path)
         }
-    };
+        RouteResolution::Matched {
+            registration,
+            route,
+        } => {
+            let host = host_header.as_deref().unwrap_or("");
+            debug!(
+                method = %method,
+                host = %host,
+                domain = %registration.domain(),
+                path = %path,
+                route = %route.path,
+                "Routing request"
+            );
 
-    debug!(
-        method = %method,
-        host = %host,
-        path = %path,
-        route = %route.path,
-        "Routing request"
-    );
+            let proto = scheme.map(|Extension(s)| s.as_str()).unwrap_or("http");
+            let client_ip = client_addr.map(|Extension(a)| a.0);
 
-    let proto = scheme.map(|Extension(s)| s.as_str()).unwrap_or("http");
-    let client_ip = client_addr.map(|Extension(a)| a.0);
+            let response = match &route.target {
+                RouteTarget::StaticFiles(dir) => {
+                    serve_static(route.path.as_str(), dir.clone(), request).await
+                }
+                RouteTarget::Proxy(target) => {
+                    proxy_request(target, request, host, proto, client_ip).await
+                }
+            };
 
-    // Route to appropriate backend based on target type
-    let response = match &route.target {
-        RouteTarget::StaticFiles(dir) => {
-            serve_static(route.path.as_str(), dir.clone(), request).await
+            info!(
+                method = %method,
+                host = %host,
+                path = %path,
+                status = response.status().as_u16(),
+                "Request completed"
+            );
+
+            response
         }
-        RouteTarget::Proxy(target) => proxy_request(target, request, &host, proto, client_ip).await,
-    };
-
-    info!(
-        method = %method,
-        host = %host,
-        path = %path,
-        status = response.status().as_u16(),
-        "Request completed"
-    );
-
-    response
+    }
 }
 
 fn build_not_registered_response(domain: &str) -> Response {
@@ -175,11 +229,7 @@ fn build_not_registered_response(domain: &str) -> Response {
 
     let html = theme::render_page("Domain Not Registered", &body, ERROR_CSS, "");
 
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header("Content-Type", "text/html; charset=utf-8")
-        .body(axum::body::Body::from(html))
-        .unwrap()
+    html_response(StatusCode::NOT_FOUND, html)
 }
 
 fn build_no_route_response(registration: &DomainRegistration, host: &str, path: &str) -> Response {
@@ -221,11 +271,18 @@ fn build_no_route_response(registration: &DomainRegistration, host: &str, path: 
 
     let html = theme::render_page("No Route Found", &body, ERROR_CSS, "");
 
+    html_response(StatusCode::NOT_FOUND, html)
+}
+
+/// Build an HTML response, falling back to a plain-text error if the builder fails.
+fn html_response(status: StatusCode, html: String) -> Response {
     Response::builder()
-        .status(StatusCode::NOT_FOUND)
+        .status(status)
         .header("Content-Type", "text/html; charset=utf-8")
         .body(axum::body::Body::from(html))
-        .unwrap()
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+        })
 }
 
 fn wildcard_base_domain(domain: &str) -> Option<String> {
@@ -294,7 +351,7 @@ const ERROR_CSS: &str = "\
 
 #[cfg(test)]
 mod tests {
-    use super::AppState;
+    use super::{RouteResolution, RuntimeState, resolve_route};
     use crate::domain::{DomainName, DomainPattern, DomainRegistration, Route};
 
     fn reg(domain: &str, wildcard: bool) -> DomainRegistration {
@@ -312,7 +369,7 @@ mod tests {
     fn test_exact_overrides_wildcard_for_base_domain() {
         let wildcard = reg("myapp.roxy", true);
         let exact = reg("myapp.roxy", false);
-        let state = AppState::new(vec![wildcard, exact]);
+        let state = RuntimeState::new(vec![wildcard, exact]);
 
         let found = state.get_domain("myapp.roxy").unwrap();
         // Exact patterns match before wildcards because both match,
@@ -323,7 +380,7 @@ mod tests {
     #[test]
     fn test_wildcard_matches_subdomain() {
         let wildcard = reg("myapp.roxy", true);
-        let state = AppState::new(vec![wildcard]);
+        let state = RuntimeState::new(vec![wildcard]);
 
         let found = state.get_domain("blog.myapp.roxy").unwrap();
         assert!(found.is_wildcard());
@@ -333,7 +390,7 @@ mod tests {
     #[test]
     fn test_wildcard_does_not_match_multi_level_subdomain() {
         let wildcard = reg("myapp.roxy", true);
-        let state = AppState::new(vec![wildcard]);
+        let state = RuntimeState::new(vec![wildcard]);
 
         // This previously matched (bug DA3) — now fixed by DomainPattern
         assert!(state.get_domain("a.b.myapp.roxy").is_none());
@@ -343,7 +400,7 @@ mod tests {
     fn test_most_specific_wildcard_wins() {
         let broad = reg("myapp.roxy", true);
         let specific = reg("sub.myapp.roxy", true);
-        let state = AppState::new(vec![broad, specific]);
+        let state = RuntimeState::new(vec![broad, specific]);
 
         let found = state.get_domain("blog.sub.myapp.roxy").unwrap();
         assert_eq!(found.domain().as_str(), "sub.myapp.roxy");
@@ -352,8 +409,140 @@ mod tests {
     #[test]
     fn test_host_is_normalized_for_lookup() {
         let exact = reg("app.roxy", false);
-        let state = AppState::new(vec![exact]);
+        let state = RuntimeState::new(vec![exact]);
 
         assert!(state.get_domain("APP.ROXY:443").is_some());
+    }
+
+    // --- resolve_route tests ---
+
+    #[test]
+    fn resolve_route_missing_host() {
+        let state = RuntimeState::new(vec![reg("app.roxy", false)]);
+        assert!(matches!(
+            resolve_route(&state, None, "/"),
+            RouteResolution::MissingHost
+        ));
+    }
+
+    #[test]
+    fn resolve_route_unknown_domain() {
+        let state = RuntimeState::new(vec![reg("app.roxy", false)]);
+        match resolve_route(&state, Some("other.roxy"), "/") {
+            RouteResolution::DomainNotRegistered { host } => {
+                assert_eq!(host, "other.roxy");
+            }
+            other => panic!("expected DomainNotRegistered, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_route_matched() {
+        let state = RuntimeState::new(vec![reg("app.roxy", false)]);
+        match resolve_route(&state, Some("app.roxy"), "/") {
+            RouteResolution::Matched {
+                registration,
+                route,
+            } => {
+                assert_eq!(registration.domain().as_str(), "app.roxy");
+                assert_eq!(route.path.as_str(), "/");
+            }
+            other => panic!("expected Matched, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_route_no_matching_route() {
+        let domain = DomainName::new("app.roxy").unwrap();
+        let pattern = DomainPattern::Exact(domain);
+        let routes = vec![Route::parse("/api=3000").unwrap()];
+        let registration = DomainRegistration::new(pattern, routes);
+
+        let state = RuntimeState::new(vec![registration]);
+        match resolve_route(&state, Some("app.roxy"), "/other") {
+            RouteResolution::NoRouteForPath {
+                registration: reg,
+                host,
+                path,
+            } => {
+                assert_eq!(reg.domain().as_str(), "app.roxy");
+                assert_eq!(host, "app.roxy");
+                assert_eq!(path, "/other");
+            }
+            other => panic!("expected NoRouteForPath, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_route_strips_port() {
+        let state = RuntimeState::new(vec![reg("app.roxy", false)]);
+        assert!(matches!(
+            resolve_route(&state, Some("app.roxy:8080"), "/"),
+            RouteResolution::Matched { .. }
+        ));
+    }
+
+    // --- RuntimeState tests ---
+
+    #[test]
+    fn runtime_state_registrations_accessor() {
+        let state = RuntimeState::new(vec![reg("b.roxy", false), reg("a.roxy", false)]);
+        let regs = state.registrations();
+        assert_eq!(regs.len(), 2);
+        // Both present — sorted by specificity (equal length, so order is stable)
+        let domains: Vec<&str> = regs.iter().map(|r| r.domain().as_str()).collect();
+        assert!(domains.contains(&"a.roxy"));
+        assert!(domains.contains(&"b.roxy"));
+    }
+
+    #[test]
+    fn runtime_state_swap_replaces_registrations() {
+        use super::SharedState;
+        use arc_swap::ArcSwap;
+        use std::sync::Arc;
+
+        let original = RuntimeState::new(vec![reg("old.roxy", false)]);
+        let shared: SharedState = Arc::new(ArcSwap::from_pointee(original));
+
+        // Verify original state
+        assert!(shared.load().get_domain("old.roxy").is_some());
+        assert!(shared.load().get_domain("new.roxy").is_none());
+
+        // Swap to new state
+        let replacement = Arc::new(RuntimeState::new(vec![reg("new.roxy", false)]));
+        shared.store(replacement);
+
+        // Verify new state
+        assert!(shared.load().get_domain("old.roxy").is_none());
+        assert!(shared.load().get_domain("new.roxy").is_some());
+    }
+
+    #[tokio::test]
+    async fn runtime_state_reload_via_channel() {
+        use super::SharedState;
+        use arc_swap::ArcSwap;
+        use std::sync::Arc;
+        use tokio::sync::mpsc;
+
+        let original = RuntimeState::new(vec![reg("old.roxy", false)]);
+        let shared: SharedState = Arc::new(ArcSwap::from_pointee(original));
+
+        let (tx, mut rx) = mpsc::channel::<Vec<crate::domain::DomainRegistration>>(4);
+
+        // Simulate what the server's reload listener does
+        let state_for_reload = shared.clone();
+        let handle = tokio::spawn(async move {
+            if let Some(regs) = rx.recv().await {
+                let new = Arc::new(RuntimeState::new(regs));
+                state_for_reload.store(new);
+            }
+        });
+
+        // Send new registrations through the channel
+        tx.send(vec![reg("new.roxy", false)]).await.unwrap();
+        handle.await.unwrap();
+
+        assert!(shared.load().get_domain("old.roxy").is_none());
+        assert!(shared.load().get_domain("new.roxy").is_some());
     }
 }

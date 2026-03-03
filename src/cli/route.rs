@@ -51,10 +51,9 @@ pub fn list(domain: String, wildcard: bool, config_path: &Path) -> Result<()> {
     let pattern = DomainPattern::from_name(&domain, wildcard)?;
 
     let config_store = ConfigStore::new(config_path.to_path_buf());
+    let use_case = ManageRoutes::new(&config_store);
 
-    let registration = config_store
-        .get_domain(&pattern)?
-        .ok_or_else(|| anyhow::anyhow!("Domain '{}' not registered", pattern))?;
+    let registration = use_case.list_routes(&pattern)?;
 
     if registration.routes().is_empty() {
         println!(

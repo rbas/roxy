@@ -1,15 +1,9 @@
-use std::fs;
 use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::infrastructure::certs::CertificateService;
-use crate::infrastructure::config::ConfigStore;
-use crate::infrastructure::dns::get_dns_service;
-use crate::infrastructure::paths::RoxyPaths;
-use crate::infrastructure::pid::PidFile;
-
 use super::StepOutcome;
+use super::ports::{CertificateManager, DaemonControl, DnsManager, DomainRepository, SystemSetup};
 
 /// What will be removed — shown to the user for confirmation.
 pub struct UninstallPreview {
@@ -24,30 +18,39 @@ pub struct UninstallResult {
 
 /// Use case: remove all Roxy configuration from the system.
 pub struct Uninstall<'a> {
-    config_store: &'a ConfigStore,
-    cert_service: &'a CertificateService,
-    paths: &'a RoxyPaths,
+    domains: &'a dyn DomainRepository,
+    certs: &'a dyn CertificateManager,
+    daemon: &'a dyn DaemonControl,
+    dns: &'a dyn DnsManager,
+    system: &'a dyn SystemSetup,
+    data_dir_display: String,
 }
 
 impl<'a> Uninstall<'a> {
     pub fn new(
-        config_store: &'a ConfigStore,
-        cert_service: &'a CertificateService,
-        paths: &'a RoxyPaths,
+        domains: &'a dyn DomainRepository,
+        certs: &'a dyn CertificateManager,
+        daemon: &'a dyn DaemonControl,
+        dns: &'a dyn DnsManager,
+        system: &'a dyn SystemSetup,
+        data_dir_display: String,
     ) -> Self {
         Self {
-            config_store,
-            cert_service,
-            paths,
+            domains,
+            certs,
+            daemon,
+            dns,
+            system,
+            data_dir_display,
         }
     }
 
     /// Build a preview so the CLI can show a confirmation prompt.
     pub fn preview(&self) -> Result<UninstallPreview> {
-        let domain_count = self.config_store.list_domains().unwrap_or_default().len();
+        let domain_count = self.domains.list().unwrap_or_default().len();
         Ok(UninstallPreview {
             domain_count,
-            data_dir: self.paths.data_dir.display().to_string(),
+            data_dir: self.data_dir_display.clone(),
         })
     }
 
@@ -66,9 +69,8 @@ impl<'a> Uninstall<'a> {
     }
 
     fn stop_daemon(&self, steps: &mut Vec<(String, StepOutcome)>) -> Result<()> {
-        let pid_file = PidFile::new(self.paths.pid_file.clone());
-        if pid_file.get_running_pid()?.is_some() {
-            pid_file.stop_gracefully(Duration::from_millis(500))?;
+        if self.daemon.get_running_pid()?.is_some() {
+            self.daemon.stop_gracefully(Duration::from_millis(500))?;
             steps.push((
                 "Stop daemon".into(),
                 StepOutcome::Success("Daemon stopped.".into()),
@@ -83,18 +85,18 @@ impl<'a> Uninstall<'a> {
     }
 
     fn remove_certificates(&self, steps: &mut Vec<(String, StepOutcome)>) {
-        let domains = self.config_store.list_domains().unwrap_or_default();
+        let domains = self.domains.list().unwrap_or_default();
 
         for registration in &domains {
             let label = format!("Remove cert: {}", registration.display_pattern());
-            let outcome = match self.cert_service.remove(registration.pattern()) {
+            let outcome = match self.certs.remove(registration.pattern()) {
                 Ok(_) => StepOutcome::Success("Removed.".into()),
                 Err(e) => StepOutcome::Warning(format!("Failed: {}", e)),
             };
             steps.push((label, outcome));
         }
 
-        let ca_outcome = match self.cert_service.remove_ca() {
+        let ca_outcome = match self.certs.remove_ca() {
             Ok(_) => StepOutcome::Success("Root CA removed.".into()),
             Err(e) => StepOutcome::Warning(format!("Failed to remove Root CA: {}", e)),
         };
@@ -102,9 +104,8 @@ impl<'a> Uninstall<'a> {
     }
 
     fn remove_dns(&self, steps: &mut Vec<(String, StepOutcome)>) -> Result<()> {
-        let dns = get_dns_service()?;
-        if dns.is_configured() {
-            dns.cleanup()?;
+        if self.dns.is_configured() {
+            self.dns.cleanup()?;
             steps.push((
                 "Remove DNS".into(),
                 StepOutcome::Success("DNS configuration removed.".into()),
@@ -119,8 +120,7 @@ impl<'a> Uninstall<'a> {
     }
 
     fn remove_data(&self, steps: &mut Vec<(String, StepOutcome)>) -> Result<()> {
-        if self.paths.data_dir.exists() {
-            fs::remove_dir_all(&self.paths.data_dir)?;
+        if self.system.remove_data_directory()? {
             steps.push((
                 "Remove data directory".into(),
                 StepOutcome::Success("Directory removed.".into()),
@@ -135,20 +135,115 @@ impl<'a> Uninstall<'a> {
     }
 
     fn cleanup_files(&self, steps: &mut Vec<(String, StepOutcome)>) {
-        if fs::remove_file(&self.paths.pid_file).is_ok() {
+        if self.system.remove_pid_file() {
             steps.push((
                 "Remove PID file".into(),
                 StepOutcome::Success("PID file removed.".into()),
             ));
         }
 
-        if let Some(log_dir) = self.paths.log_file.parent()
-            && fs::remove_dir_all(log_dir).is_ok()
-        {
+        if self.system.remove_log_directory() {
             steps.push((
                 "Remove log directory".into(),
                 StepOutcome::Success("Log directory removed.".into()),
             ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::testkit::*;
+    use crate::domain::{
+        DomainPattern, DomainRegistration, PathPrefix, ProxyTarget, Route, RouteTarget,
+    };
+
+    fn registration(name: &str) -> DomainRegistration {
+        DomainRegistration::new(
+            DomainPattern::from_name(name, false).unwrap(),
+            vec![Route::new(
+                PathPrefix::new("/").unwrap(),
+                RouteTarget::Proxy(ProxyTarget::parse("3000").unwrap()),
+            )],
+        )
+    }
+
+    #[test]
+    fn uninstall_stops_daemon_and_cleans_up() {
+        let repo = InMemoryDomainRepository::with_domains(vec![registration("myapp.roxy")]);
+        let certs = InMemoryCertificateManager::new();
+        let daemon = InMemoryDaemonControl::running(999);
+        let dns = InMemoryDnsManager::already_configured();
+        let system = InMemorySystemSetup::with_existing_data();
+        let svc = Uninstall::new(&repo, &certs, &daemon, &dns, &system, "/etc/roxy".into());
+
+        let result = svc.execute().unwrap();
+
+        // Daemon stopped
+        assert!(!daemon.is_running().unwrap());
+        // DNS cleaned
+        assert!(!dns.is_configured());
+        // All steps present
+        assert!(!result.steps.is_empty());
+    }
+
+    #[test]
+    fn uninstall_skips_when_daemon_not_running() {
+        let repo = InMemoryDomainRepository::new();
+        let certs = InMemoryCertificateManager::new();
+        let daemon = InMemoryDaemonControl::stopped();
+        let dns = InMemoryDnsManager::new();
+        let system = InMemorySystemSetup::new();
+        let svc = Uninstall::new(&repo, &certs, &daemon, &dns, &system, "/etc/roxy".into());
+
+        let result = svc.execute().unwrap();
+
+        let daemon_step = result
+            .steps
+            .iter()
+            .find(|(label, _)| label == "Stop daemon")
+            .unwrap();
+        assert!(matches!(daemon_step.1, StepOutcome::Skipped(_)));
+    }
+
+    #[test]
+    fn preview_shows_domain_count() {
+        let repo = InMemoryDomainRepository::with_domains(vec![
+            registration("a.roxy"),
+            registration("b.roxy"),
+        ]);
+        let certs = InMemoryCertificateManager::new();
+        let daemon = InMemoryDaemonControl::stopped();
+        let dns = InMemoryDnsManager::new();
+        let system = InMemorySystemSetup::new();
+        let svc = Uninstall::new(&repo, &certs, &daemon, &dns, &system, "/etc/roxy".into());
+
+        let preview = svc.preview().unwrap();
+        assert_eq!(preview.domain_count, 2);
+        assert_eq!(preview.data_dir, "/etc/roxy");
+    }
+
+    #[test]
+    fn uninstall_warns_on_cert_removal_failure() {
+        let repo = InMemoryDomainRepository::with_domains(vec![registration("myapp.roxy")]);
+        let certs = InMemoryCertificateManager::always_failing();
+        let daemon = InMemoryDaemonControl::stopped();
+        let dns = InMemoryDnsManager::new();
+        let system = InMemorySystemSetup::new();
+        let svc = Uninstall::new(&repo, &certs, &daemon, &dns, &system, "/etc/roxy".into());
+
+        let result = svc.execute().unwrap();
+
+        // Cert removal should warn, not fail the whole operation
+        let cert_steps: Vec<_> = result
+            .steps
+            .iter()
+            .filter(|(label, _)| label.starts_with("Remove cert"))
+            .collect();
+        assert!(!cert_steps.is_empty());
+        for (_, outcome) in cert_steps {
+            assert!(matches!(outcome, StepOutcome::Warning(_)));
         }
     }
 }

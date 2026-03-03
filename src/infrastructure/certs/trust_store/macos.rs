@@ -17,6 +17,13 @@ impl MacOsTrustStore {
 
 impl TrustStore for MacOsTrustStore {
     fn add_ca(&self, cert_path: &Path) -> Result<(), CertError> {
+        let cert_path_str = cert_path.to_str().ok_or_else(|| {
+            CertError::TrustStoreError(format!(
+                "Certificate path contains invalid UTF-8: {}",
+                cert_path.display()
+            ))
+        })?;
+
         // Add CA certificate to system keychain as a trusted root
         let output = Command::new("security")
             .args([
@@ -26,7 +33,7 @@ impl TrustStore for MacOsTrustStore {
                 "trustRoot",
                 "-k",
                 "/Library/Keychains/System.keychain",
-                cert_path.to_str().unwrap(),
+                cert_path_str,
             ])
             .output()
             .map_err(|e| {

@@ -1,33 +1,26 @@
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
+use crate::application::restart_daemon::RestartDaemon;
 use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
 
 pub fn execute(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Result<()> {
     let pid_file = PidFile::new(paths.pid_file.clone());
-
-    if !pid_file.is_running()? {
-        bail!("Roxy daemon is not running.\nStart it with: sudo roxy start");
-    }
-
-    println!("Reloading Roxy daemon...");
-
-    // Stop the daemon
-    super::stop::execute(paths)?;
-
-    // Brief pause to ensure clean shutdown
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    // Re-load config from disk to pick up changes
     let config_store = ConfigStore::new(config_path.to_path_buf());
-    let fresh_config = config_store.load()?;
-    let fresh_paths = fresh_config.paths.clone();
+    let service = RestartDaemon::new(&pid_file, &config_store);
+    let ready = service.execute(true)?;
 
-    // Start the daemon with fresh config and paths
-    super::start::execute(false, verbose, config_path, &fresh_paths, &fresh_config)?;
+    println!("Starting Roxy daemon...");
+    super::start::execute(
+        false,
+        verbose,
+        config_path,
+        &ready.paths,
+        &ready.daemon_config,
+    )?;
 
     println!("Daemon reloaded with updated configuration.");
     Ok(())

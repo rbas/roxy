@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+use crate::application::ports::DnsConfigError;
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+use crate::application::ports::DnsManager;
+
 #[derive(Error, Debug)]
 pub enum DnsError {
     #[error(
@@ -55,22 +59,91 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxDnsService;
 
+/// Concrete DNS service type for the current platform.
+#[cfg(target_os = "macos")]
+pub type PlatformDnsService = MacOsDnsService;
+
+/// Concrete DNS service type for the current platform.
+#[cfg(target_os = "linux")]
+pub type PlatformDnsService = LinuxDnsService;
+
+/// Concrete DNS service type for the current platform.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub type PlatformDnsService = UnsupportedDnsService;
+
 /// Get the DNS service for the current platform
-pub fn get_dns_service() -> Result<Box<dyn DnsService>, DnsError> {
-    #[cfg(target_os = "macos")]
-    {
-        Ok(Box::new(MacOsDnsService::new()))
-    }
+#[cfg(target_os = "macos")]
+pub fn get_dns_service() -> Result<PlatformDnsService, DnsError> {
+    Ok(MacOsDnsService::new())
+}
 
-    #[cfg(target_os = "linux")]
-    {
-        Ok(Box::new(LinuxDnsService::new()))
-    }
+/// Get the DNS service for the current platform
+#[cfg(target_os = "linux")]
+pub fn get_dns_service() -> Result<PlatformDnsService, DnsError> {
+    Ok(LinuxDnsService::new())
+}
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
+/// Get the DNS service for the current platform
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn get_dns_service() -> Result<PlatformDnsService, DnsError> {
+    Err(DnsError::UnsupportedPlatform(
+        std::env::consts::OS.to_string(),
+    ))
+}
+
+/// Fallback for unsupported platforms.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub struct UnsupportedDnsService;
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+impl DnsService for UnsupportedDnsService {
+    fn setup(&self, _port: u16) -> Result<(), DnsError> {
         Err(DnsError::UnsupportedPlatform(
             std::env::consts::OS.to_string(),
         ))
+    }
+
+    fn cleanup(&self) -> Result<(), DnsError> {
+        Err(DnsError::UnsupportedPlatform(
+            std::env::consts::OS.to_string(),
+        ))
+    }
+
+    fn validate(&self) -> Result<(), DnsError> {
+        Err(DnsError::UnsupportedPlatform(
+            std::env::consts::OS.to_string(),
+        ))
+    }
+
+    fn is_configured(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+impl DnsManager for UnsupportedDnsService {
+    fn setup(&self, port: u16) -> Result<(), DnsConfigError> {
+        DnsService::setup(self, port).map_err(map_dns_error)
+    }
+
+    fn cleanup(&self) -> Result<(), DnsConfigError> {
+        DnsService::cleanup(self).map_err(map_dns_error)
+    }
+
+    fn validate(&self) -> Result<(), DnsConfigError> {
+        DnsService::validate(self).map_err(map_dns_error)
+    }
+
+    fn is_configured(&self) -> bool {
+        DnsService::is_configured(self)
+    }
+}
+
+pub(crate) fn map_dns_error(e: DnsError) -> DnsConfigError {
+    match e {
+        DnsError::PermissionDenied => DnsConfigError::PermissionDenied,
+        DnsError::ValidationFailed(m) => DnsConfigError::ValidationFailed(m),
+        DnsError::UnsupportedPlatform(p) => DnsConfigError::UnsupportedPlatform(p),
+        other => DnsConfigError::OperationFailed(other.into()),
     }
 }

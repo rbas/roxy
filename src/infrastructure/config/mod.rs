@@ -1,7 +1,10 @@
 mod dto;
 
+// Re-export shared config types so existing CLI/daemon code keeps compiling.
+pub use crate::config::{DaemonConfig, RoxyPaths};
+
+use crate::application::ports::{ConfigLoadError, ConfigLoader, DomainRepository, RepositoryError};
 use crate::domain::{DomainPattern, DomainRegistration};
-use crate::infrastructure::paths::RoxyPaths;
 use dto::RegistrationDto;
 use std::collections::HashMap;
 use std::fs;
@@ -32,86 +35,6 @@ pub enum ConfigError {
     InvalidDomain(String, String),
 }
 
-fn default_http_port() -> u16 {
-    80
-}
-
-fn default_https_port() -> u16 {
-    443
-}
-
-fn default_dns_port() -> u16 {
-    1053
-}
-
-fn default_log_level() -> String {
-    "info".to_string()
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DaemonConfig {
-    #[serde(default = "default_http_port")]
-    pub http_port: u16,
-
-    #[serde(default = "default_https_port")]
-    pub https_port: u16,
-
-    #[serde(default = "default_dns_port")]
-    pub dns_port: u16,
-
-    #[serde(default = "default_log_level")]
-    pub log_level: String,
-}
-
-impl Default for DaemonConfig {
-    fn default() -> Self {
-        Self {
-            http_port: default_http_port(),
-            https_port: default_https_port(),
-            dns_port: default_dns_port(),
-            log_level: default_log_level(),
-        }
-    }
-}
-
-impl DaemonConfig {
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.http_port == 0 {
-            return Err(ConfigError::InvalidConfig("http_port cannot be 0".into()));
-        }
-        if self.https_port == 0 {
-            return Err(ConfigError::InvalidConfig("https_port cannot be 0".into()));
-        }
-        if self.dns_port == 0 {
-            return Err(ConfigError::InvalidConfig("dns_port cannot be 0".into()));
-        }
-        if self.http_port == self.https_port {
-            return Err(ConfigError::InvalidConfig(
-                "http_port and https_port must be different".into(),
-            ));
-        }
-
-        let ports = [self.http_port, self.https_port, self.dns_port];
-        let unique_ports: std::collections::HashSet<_> = ports.iter().collect();
-        if unique_ports.len() != ports.len() {
-            return Err(ConfigError::InvalidConfig(
-                "http_port, https_port, and dns_port must all be different".into(),
-            ));
-        }
-
-        let valid_levels = ["error", "warn", "info", "debug"];
-        if !valid_levels.contains(&self.log_level.as_str()) {
-            return Err(ConfigError::InvalidConfig(format!(
-                "Invalid log_level '{}'. Must be one of: {}",
-                self.log_level,
-                valid_levels.join(", ")
-            )));
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -135,7 +58,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        self.daemon.validate()?;
+        self.daemon.validate().map_err(ConfigError::InvalidConfig)?;
 
         for (name, dto) in &self.domains {
             let registration = DomainRegistration::from(dto.clone());
@@ -238,6 +161,11 @@ impl ConfigStore {
         self.save(&config)
     }
 
+    /// Check whether the config file exists on disk.
+    pub fn config_exists(&self) -> bool {
+        self.path.exists()
+    }
+
     pub fn list_domains(&self) -> Result<Vec<DomainRegistration>, ConfigError> {
         let config = self.load()?;
         Ok(config
@@ -245,6 +173,63 @@ impl ConfigStore {
             .into_values()
             .map(DomainRegistration::from)
             .collect())
+    }
+}
+
+fn map_config_error(e: ConfigError) -> ConfigLoadError {
+    match e {
+        ConfigError::InvalidConfig(msg) => ConfigLoadError::Invalid(msg),
+        other => ConfigLoadError::IoFailed(other.into()),
+    }
+}
+
+impl ConfigLoader for ConfigStore {
+    fn load(&self) -> Result<(DaemonConfig, RoxyPaths), ConfigLoadError> {
+        let config = ConfigStore::load(self).map_err(map_config_error)?;
+        Ok((config.daemon, config.paths))
+    }
+
+    fn save_defaults(&self) -> Result<(), ConfigLoadError> {
+        let config = Config::default();
+        self.save(&config).map_err(map_config_error)
+    }
+
+    fn exists(&self) -> bool {
+        self.config_exists()
+    }
+}
+
+impl DomainRepository for ConfigStore {
+    fn get(&self, pattern: &DomainPattern) -> Result<Option<DomainRegistration>, RepositoryError> {
+        self.get_domain(pattern)
+            .map_err(|e| RepositoryError::StorageFailed(e.into()))
+    }
+
+    fn list(&self) -> Result<Vec<DomainRegistration>, RepositoryError> {
+        self.list_domains()
+            .map_err(|e| RepositoryError::StorageFailed(e.into()))
+    }
+
+    fn add(&self, registration: DomainRegistration) -> Result<(), RepositoryError> {
+        self.add_domain(registration).map_err(|e| match e {
+            ConfigError::DomainExists(d) => RepositoryError::DomainExists(d),
+            other => RepositoryError::StorageFailed(other.into()),
+        })
+    }
+
+    fn update(&self, registration: DomainRegistration) -> Result<(), RepositoryError> {
+        self.update_domain(registration).map_err(|e| match e {
+            ConfigError::DomainNotFound(d) => RepositoryError::DomainNotFound(d),
+            other => RepositoryError::StorageFailed(other.into()),
+        })
+    }
+
+    fn remove(&self, pattern: &DomainPattern) -> Result<(), RepositoryError> {
+        self.remove_domain(pattern).map_err(|e| match e {
+            ConfigError::DomainNotFound(d) => RepositoryError::DomainNotFound(d),
+            other => RepositoryError::StorageFailed(other.into()),
+        })?;
+        Ok(())
     }
 }
 

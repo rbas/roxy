@@ -2,6 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::application::list_domains::ListDomains;
 use crate::domain::RouteTarget;
 use crate::infrastructure::certs::CertificateService;
 use crate::infrastructure::config::ConfigStore;
@@ -10,7 +11,9 @@ use crate::infrastructure::paths::RoxyPaths;
 pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let cert_service = CertificateService::new(paths);
-    let domains = config_store.list_domains()?;
+
+    let use_case = ListDomains::new(&config_store, &cert_service);
+    let domains = use_case.execute()?;
 
     if domains.is_empty() {
         println!("No domains registered.");
@@ -22,21 +25,20 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths) -> Result<()> {
 
     println!("Registered domains:\n");
 
-    for reg in domains {
-        let has_cert = cert_service.exists(reg.pattern());
-        let https_status = if has_cert {
-            match cert_service.is_trusted() {
-                Ok(true) => "(HTTPS)",
-                Ok(false) => "(HTTPS untrusted)",
-                Err(_) => "(HTTPS error)",
+    for info in domains {
+        let https_status = if info.has_cert {
+            match info.cert_trusted {
+                Some(true) => "(HTTPS)",
+                Some(false) => "(HTTPS untrusted)",
+                None => "(HTTPS error)",
             }
         } else {
             ""
         };
 
-        println!("  {} {}", reg.display_pattern(), https_status);
+        println!("  {} {}", info.registration.display_pattern(), https_status);
 
-        for route in reg.routes() {
+        for route in info.registration.routes() {
             let target_str = match &route.target {
                 RouteTarget::Proxy(p) => p.to_string(),
                 RouteTarget::StaticFiles(p) => p.display().to_string(),

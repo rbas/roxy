@@ -1,4 +1,5 @@
-use super::{DnsError, DnsService};
+use super::{DnsError, DnsService, map_dns_error};
+use crate::application::ports::{DnsConfigError, DnsManager};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -132,6 +133,24 @@ impl DnsService for MacOsDnsService {
 
     fn is_configured(&self) -> bool {
         Path::new(RESOLVER_FILE).exists()
+    }
+}
+
+impl DnsManager for MacOsDnsService {
+    fn setup(&self, port: u16) -> Result<(), DnsConfigError> {
+        DnsService::setup(self, port).map_err(map_dns_error)
+    }
+
+    fn cleanup(&self) -> Result<(), DnsConfigError> {
+        DnsService::cleanup(self).map_err(map_dns_error)
+    }
+
+    fn validate(&self) -> Result<(), DnsConfigError> {
+        DnsService::validate(self).map_err(map_dns_error)
+    }
+
+    fn is_configured(&self) -> bool {
+        DnsService::is_configured(self)
     }
 }
 
