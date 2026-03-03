@@ -5,11 +5,12 @@ use std::process;
 use std::time::Duration;
 
 use super::process::ProcessControl;
+use super::process::PlatformProcessControl;
 use super::process::get_process_control;
 
 pub struct PidFile {
     path: PathBuf,
-    process: Box<dyn ProcessControl>,
+    process: PlatformProcessControl,
 }
 
 impl PidFile {

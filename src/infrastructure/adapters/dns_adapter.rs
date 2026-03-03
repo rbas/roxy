@@ -1,13 +1,13 @@
 use crate::application::ports::{DnsConfigError, DnsManager};
-use crate::infrastructure::dns::{DnsError, DnsService};
+use crate::infrastructure::dns::{DnsError, DnsService, PlatformDnsService};
 
 /// Adapter that bridges a [`DnsService`] to the [`DnsManager`] port.
 pub struct DnsAdapter {
-    inner: Box<dyn DnsService>,
+    inner: PlatformDnsService,
 }
 
 impl DnsAdapter {
-    pub fn new(inner: Box<dyn DnsService>) -> Self {
+    pub fn new(inner: PlatformDnsService) -> Self {
         Self { inner }
     }
 }

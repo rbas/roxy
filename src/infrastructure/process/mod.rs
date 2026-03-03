@@ -14,16 +14,24 @@ pub trait ProcessControl: Send {
 #[cfg(unix)]
 mod unix;
 
+/// Concrete process control type for the current platform.
+#[cfg(unix)]
+pub type PlatformProcessControl = unix::UnixProcessControl;
+
+/// Concrete process control type for the current platform.
+#[cfg(not(unix))]
+pub type PlatformProcessControl = UnsupportedProcessControl;
+
 /// Get the process control provider for the current platform.
 #[cfg(unix)]
-pub fn get_process_control() -> Box<dyn ProcessControl> {
-    Box::new(unix::UnixProcessControl)
+pub fn get_process_control() -> PlatformProcessControl {
+    unix::UnixProcessControl
 }
 
 /// Get the process control provider for the current platform.
 #[cfg(not(unix))]
-pub fn get_process_control() -> Box<dyn ProcessControl> {
-    Box::new(UnsupportedProcessControl)
+pub fn get_process_control() -> PlatformProcessControl {
+    UnsupportedProcessControl
 }
 
 /// Fallback for unsupported platforms.

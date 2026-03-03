@@ -55,22 +55,63 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxDnsService;
 
+/// Concrete DNS service type for the current platform.
+#[cfg(target_os = "macos")]
+pub type PlatformDnsService = MacOsDnsService;
+
+/// Concrete DNS service type for the current platform.
+#[cfg(target_os = "linux")]
+pub type PlatformDnsService = LinuxDnsService;
+
+/// Concrete DNS service type for the current platform.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub type PlatformDnsService = UnsupportedDnsService;
+
 /// Get the DNS service for the current platform
 #[cfg(target_os = "macos")]
-pub fn get_dns_service() -> Result<Box<dyn DnsService>, DnsError> {
-    Ok(Box::new(MacOsDnsService::new()))
+pub fn get_dns_service() -> Result<PlatformDnsService, DnsError> {
+    Ok(MacOsDnsService::new())
 }
 
 /// Get the DNS service for the current platform
 #[cfg(target_os = "linux")]
-pub fn get_dns_service() -> Result<Box<dyn DnsService>, DnsError> {
-    Ok(Box::new(LinuxDnsService::new()))
+pub fn get_dns_service() -> Result<PlatformDnsService, DnsError> {
+    Ok(LinuxDnsService::new())
 }
 
 /// Get the DNS service for the current platform
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn get_dns_service() -> Result<Box<dyn DnsService>, DnsError> {
+pub fn get_dns_service() -> Result<PlatformDnsService, DnsError> {
     Err(DnsError::UnsupportedPlatform(
         std::env::consts::OS.to_string(),
     ))
+}
+
+/// Fallback for unsupported platforms.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub struct UnsupportedDnsService;
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+impl DnsService for UnsupportedDnsService {
+    fn setup(&self, _port: u16) -> Result<(), DnsError> {
+        Err(DnsError::UnsupportedPlatform(
+            std::env::consts::OS.to_string(),
+        ))
+    }
+
+    fn cleanup(&self) -> Result<(), DnsError> {
+        Err(DnsError::UnsupportedPlatform(
+            std::env::consts::OS.to_string(),
+        ))
+    }
+
+    fn validate(&self) -> Result<(), DnsError> {
+        Err(DnsError::UnsupportedPlatform(
+            std::env::consts::OS.to_string(),
+        ))
+    }
+
+    fn is_configured(&self) -> bool {
+        false
+    }
 }

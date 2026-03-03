@@ -12,22 +12,34 @@ mod macos;
 #[cfg(target_os = "linux")]
 mod linux;
 
+/// Concrete network info type for the current platform.
+#[cfg(target_os = "macos")]
+pub type PlatformNetworkInfo = macos::MacOsNetworkInfo;
+
+/// Concrete network info type for the current platform.
+#[cfg(target_os = "linux")]
+pub type PlatformNetworkInfo = linux::LinuxNetworkInfo;
+
+/// Concrete network info type for the current platform.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub type PlatformNetworkInfo = FallbackNetworkInfo;
+
 /// Get the network info provider for the current platform.
 #[cfg(target_os = "macos")]
-pub fn get_network_info() -> Box<dyn NetworkInfo> {
-    Box::new(macos::MacOsNetworkInfo::new())
+pub fn get_network_info() -> PlatformNetworkInfo {
+    macos::MacOsNetworkInfo::new()
 }
 
 /// Get the network info provider for the current platform.
 #[cfg(target_os = "linux")]
-pub fn get_network_info() -> Box<dyn NetworkInfo> {
-    Box::new(linux::LinuxNetworkInfo::new())
+pub fn get_network_info() -> PlatformNetworkInfo {
+    linux::LinuxNetworkInfo::new()
 }
 
 /// Get the network info provider for the current platform.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn get_network_info() -> Box<dyn NetworkInfo> {
-    Box::new(FallbackNetworkInfo)
+pub fn get_network_info() -> PlatformNetworkInfo {
+    FallbackNetworkInfo
 }
 
 /// Get the primary LAN IPv4 address of the host.

@@ -13,14 +13,14 @@ mod unix;
 
 /// Get the file security provider for the current platform.
 #[cfg(unix)]
-pub fn get_file_security() -> Box<dyn FileSecurity> {
-    Box::new(unix::UnixFileSecurity)
+pub fn get_file_security() -> impl FileSecurity {
+    unix::UnixFileSecurity
 }
 
 /// Get the file security provider for the current platform.
 #[cfg(not(unix))]
-pub fn get_file_security() -> Box<dyn FileSecurity> {
-    Box::new(UnsupportedFileSecurity)
+pub fn get_file_security() -> impl FileSecurity {
+    UnsupportedFileSecurity
 }
 
 /// Convenience function: restrict a file to owner-only read/write.
