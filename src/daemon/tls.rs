@@ -132,6 +132,12 @@ pub fn create_tls_acceptor(
         certs.push((pattern.clone(), certified_key));
     }
 
+    // If all certificate loads/generations failed and we have no CA key for
+    // on-demand certs, HTTPS can't serve anything — don't start the listener.
+    if certs.is_empty() && ca_key_pem.is_none() {
+        return Ok(None);
+    }
+
     // Most-specific pattern wins (longest base domain).
     certs.sort_by_key(|(p, _)| std::cmp::Reverse(p.specificity()));
 

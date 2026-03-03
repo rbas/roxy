@@ -88,6 +88,8 @@ pub async fn serve(
     let _ = std::fs::remove_file(&socket_path);
 
     let listener = UnixListener::bind(&socket_path)?;
+    crate::infrastructure::file_security::restrict_key_permissions(&socket_path)
+        .map_err(|e| anyhow::anyhow!("Failed to set socket permissions: {e}"))?;
     info!(path = %socket_path.display(), "Management socket listening");
 
     loop {

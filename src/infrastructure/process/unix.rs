@@ -17,16 +17,26 @@ impl ProcessControl for UnixProcessControl {
     }
 
     fn terminate(&self, pid: u32, timeout: Duration) -> Result<()> {
-        Command::new("kill")
+        let output = Command::new("kill")
             .args(["-TERM", &pid.to_string()])
             .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to send SIGTERM to pid {pid}: {stderr}");
+        }
 
         std::thread::sleep(timeout);
 
         if self.process_exists(pid) {
-            Command::new("kill")
+            let output = Command::new("kill")
                 .args(["-KILL", &pid.to_string()])
                 .output()?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("Failed to send SIGKILL to pid {pid}: {stderr}");
+            }
         }
 
         Ok(())

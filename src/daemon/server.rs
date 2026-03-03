@@ -236,8 +236,18 @@ impl Server {
 
             tokio::select! {
                 r = http_server => r??,
-                _ = https_server => {},
-                _ = dns_handle => {},
+                r = https_server => {
+                    if let Err(e) = r {
+                        error!(error = %e, "HTTPS server task failed");
+                        anyhow::bail!("HTTPS server task failed: {e}");
+                    }
+                },
+                r = dns_handle => {
+                    if let Err(e) = r {
+                        error!(error = %e, "DNS server task failed");
+                        anyhow::bail!("DNS server task failed: {e}");
+                    }
+                },
             }
         } else {
             warn!(
@@ -246,7 +256,12 @@ impl Server {
             );
             tokio::select! {
                 r = http_server => r??,
-                _ = dns_handle => {},
+                r = dns_handle => {
+                    if let Err(e) = r {
+                        error!(error = %e, "DNS server task failed");
+                        anyhow::bail!("DNS server task failed: {e}");
+                    }
+                },
             }
         }
 
