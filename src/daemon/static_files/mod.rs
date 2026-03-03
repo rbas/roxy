@@ -128,7 +128,9 @@ fn redirect_to(location: &str) -> Response {
         .status(StatusCode::TEMPORARY_REDIRECT)
         .header(header::LOCATION, location)
         .body(axum::body::Body::empty())
-        .unwrap()
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+        })
 }
 
 /// `ServeDir` generates redirects based on the request URI it sees.
@@ -191,7 +193,9 @@ fn build_not_found_response(uri_path: &str) -> Response {
         .status(StatusCode::NOT_FOUND)
         .header("Content-Type", "text/html; charset=utf-8")
         .body(axum::body::Body::from(html))
-        .unwrap()
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+        })
 }
 
 #[cfg(test)]

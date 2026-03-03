@@ -7,6 +7,8 @@ pub mod register_domain;
 pub mod restart_daemon;
 pub mod start_daemon;
 pub mod stop_daemon;
+#[cfg(test)]
+pub mod testkit;
 pub mod uninstall;
 pub mod unregister_domain;
 

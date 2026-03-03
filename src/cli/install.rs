@@ -26,7 +26,14 @@ pub fn execute(config_path: &Path, paths: &RoxyPaths, config: &Config) -> Result
     let network = NetworkInfoAdapter::new(get_network_info());
     let system = SystemSetupAdapter::new(paths);
 
-    let use_case = Install::new(&certs, &config_loader, &dns, &network, &system, config);
+    let use_case = Install::new(
+        &certs,
+        &config_loader,
+        &dns,
+        &network,
+        &system,
+        config.daemon.dns_port,
+    );
     let result = use_case.execute()?;
 
     println!("  Using IP address: {}", result.lan_ip);

@@ -32,22 +32,31 @@ pub fn init_tracing(verbose: bool, output: TracingOutput) {
                 let _ = fs::create_dir_all(parent);
             }
 
-            // Open file for appending
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-                .expect("Failed to open log file");
-
-            tracing_subscriber::registry()
-                .with(filter)
-                .with(
-                    fmt::layer()
-                        .with_target(false)
-                        .with_ansi(false)
-                        .with_writer(file),
-                )
-                .init();
+            // Open file for appending; fall back to stdout if inaccessible
+            match OpenOptions::new().create(true).append(true).open(&path) {
+                Ok(file) => {
+                    tracing_subscriber::registry()
+                        .with(filter)
+                        .with(
+                            fmt::layer()
+                                .with_target(false)
+                                .with_ansi(false)
+                                .with_writer(file),
+                        )
+                        .init();
+                }
+                Err(e) => {
+                    tracing_subscriber::registry()
+                        .with(filter)
+                        .with(fmt::layer().with_target(false))
+                        .init();
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "Could not open log file, falling back to stdout"
+                    );
+                }
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 
-use crate::infrastructure::config::Config;
+use crate::config::DaemonConfig;
 
 use super::ports::DaemonControl;
 
@@ -16,11 +16,11 @@ pub struct StartReady {
 /// the CLI layer, which has access to the `daemon` binary-crate module.
 pub struct StartDaemon<'a> {
     daemon: &'a dyn DaemonControl,
-    config: &'a Config,
+    config: &'a DaemonConfig,
 }
 
 impl<'a> StartDaemon<'a> {
-    pub fn new(daemon: &'a dyn DaemonControl, config: &'a Config) -> Self {
+    pub fn new(daemon: &'a dyn DaemonControl, config: &'a DaemonConfig) -> Self {
         Self { daemon, config }
     }
 
@@ -38,11 +38,52 @@ impl<'a> StartDaemon<'a> {
 
         self.config
             .validate()
-            .context("Configuration validation failed")?;
+            .map_err(|msg| anyhow::anyhow!("Configuration validation failed: {}", msg))?;
 
         Ok(StartReady {
-            http_port: self.config.daemon.http_port,
-            https_port: self.config.daemon.https_port,
+            http_port: self.config.http_port,
+            https_port: self.config.https_port,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::testkit::*;
+
+    #[test]
+    fn preflight_succeeds_when_daemon_stopped() {
+        let daemon = InMemoryDaemonControl::stopped();
+        let config = DaemonConfig::default();
+        let svc = StartDaemon::new(&daemon, &config);
+
+        let ready = svc.preflight().unwrap();
+        assert_eq!(ready.http_port, 80);
+        assert_eq!(ready.https_port, 443);
+    }
+
+    #[test]
+    fn preflight_fails_when_daemon_already_running() {
+        let daemon = InMemoryDaemonControl::running(1234);
+        let config = DaemonConfig::default();
+        let svc = StartDaemon::new(&daemon, &config);
+
+        let err = svc.preflight().err().unwrap();
+        assert!(err.to_string().contains("already running"));
+        assert!(err.to_string().contains("1234"));
+    }
+
+    #[test]
+    fn preflight_validates_config() {
+        let daemon = InMemoryDaemonControl::stopped();
+        let config = DaemonConfig {
+            http_port: 0,
+            ..DaemonConfig::default()
+        };
+        let svc = StartDaemon::new(&daemon, &config);
+
+        let err = svc.preflight().err().unwrap();
+        assert!(err.to_string().contains("http_port cannot be 0"));
     }
 }

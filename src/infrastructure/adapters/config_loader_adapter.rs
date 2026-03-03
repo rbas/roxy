@@ -1,5 +1,6 @@
 use crate::application::ports::{ConfigLoadError, ConfigLoader};
-use crate::infrastructure::config::{Config, ConfigError, ConfigStore};
+use crate::config::{DaemonConfig, RoxyPaths};
+use crate::infrastructure::config::{ConfigError, ConfigStore};
 
 /// Adapter that bridges [`ConfigStore`] config operations to the
 /// [`ConfigLoader`] port.
@@ -14,12 +15,14 @@ impl<'a> ConfigLoaderAdapter<'a> {
 }
 
 impl ConfigLoader for ConfigLoaderAdapter<'_> {
-    fn load(&self) -> Result<Config, ConfigLoadError> {
-        self.inner.load().map_err(map_config_error)
+    fn load(&self) -> Result<(DaemonConfig, RoxyPaths), ConfigLoadError> {
+        let config = self.inner.load().map_err(map_config_error)?;
+        Ok((config.daemon, config.paths))
     }
 
-    fn save(&self, config: &Config) -> Result<(), ConfigLoadError> {
-        self.inner.save(config).map_err(map_config_error)
+    fn save_defaults(&self) -> Result<(), ConfigLoadError> {
+        let config = crate::infrastructure::config::Config::default();
+        self.inner.save(&config).map_err(map_config_error)
     }
 
     fn exists(&self) -> bool {

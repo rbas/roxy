@@ -1,4 +1,4 @@
-use crate::infrastructure::config::Config;
+use crate::config::{DaemonConfig, RoxyPaths};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigLoadError {
@@ -9,13 +9,18 @@ pub enum ConfigLoadError {
     IoFailed(#[source] anyhow::Error),
 }
 
-/// Port for loading and saving the daemon configuration file.
+/// Port for loading and persisting daemon configuration.
+///
+/// Only exposes the configuration values the application layer needs
+/// (daemon settings and paths). Domain persistence is handled by
+/// [`DomainRepository`](super::DomainRepository).
 pub trait ConfigLoader {
-    /// Load configuration from storage. Returns defaults if not found.
-    fn load(&self) -> Result<Config, ConfigLoadError>;
+    /// Load daemon configuration and paths from storage.
+    /// Returns defaults if no config file exists.
+    fn load(&self) -> Result<(DaemonConfig, RoxyPaths), ConfigLoadError>;
 
-    /// Persist configuration to storage.
-    fn save(&self, config: &Config) -> Result<(), ConfigLoadError>;
+    /// Create a config file with default values.
+    fn save_defaults(&self) -> Result<(), ConfigLoadError>;
 
     /// Check whether the configuration file exists on disk.
     fn exists(&self) -> bool;

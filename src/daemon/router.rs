@@ -175,11 +175,7 @@ fn build_not_registered_response(domain: &str) -> Response {
 
     let html = theme::render_page("Domain Not Registered", &body, ERROR_CSS, "");
 
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header("Content-Type", "text/html; charset=utf-8")
-        .body(axum::body::Body::from(html))
-        .unwrap()
+    html_response(StatusCode::NOT_FOUND, html)
 }
 
 fn build_no_route_response(registration: &DomainRegistration, host: &str, path: &str) -> Response {
@@ -221,11 +217,18 @@ fn build_no_route_response(registration: &DomainRegistration, host: &str, path: 
 
     let html = theme::render_page("No Route Found", &body, ERROR_CSS, "");
 
+    html_response(StatusCode::NOT_FOUND, html)
+}
+
+/// Build an HTML response, falling back to a plain-text error if the builder fails.
+fn html_response(status: StatusCode, html: String) -> Response {
     Response::builder()
-        .status(StatusCode::NOT_FOUND)
+        .status(status)
         .header("Content-Type", "text/html; charset=utf-8")
         .body(axum::body::Body::from(html))
-        .unwrap()
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+        })
 }
 
 fn wildcard_base_domain(domain: &str) -> Option<String> {

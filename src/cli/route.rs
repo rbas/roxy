@@ -3,7 +3,6 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::application::manage_routes::ManageRoutes;
-use crate::application::ports::DomainRepository;
 use crate::domain::{DomainPattern, PathPrefix, RouteTarget};
 use crate::infrastructure::adapters::DomainRepositoryAdapter;
 use crate::infrastructure::config::ConfigStore;
@@ -56,10 +55,9 @@ pub fn list(domain: String, wildcard: bool, config_path: &Path) -> Result<()> {
 
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let repo = DomainRepositoryAdapter::new(&config_store);
+    let use_case = ManageRoutes::new(&repo);
 
-    let registration = repo
-        .get(&pattern)?
-        .ok_or_else(|| anyhow::anyhow!("Domain '{}' not registered", pattern))?;
+    let registration = use_case.list_routes(&pattern)?;
 
     if registration.routes().is_empty() {
         println!(

@@ -1,7 +1,12 @@
 use std::fmt;
 
 use super::domain_name::DomainName;
-use crate::infrastructure::certs::WILDCARD_CERT_PREFIX;
+
+/// Filename prefix for wildcard certificates stored on disk.
+///
+/// Uses underscores so it can't collide with a valid `.roxy` domain
+/// (underscores are rejected by `DomainName` validation).
+pub const WILDCARD_CERT_PREFIX: &str = "__wildcard__.";
 
 /// Value object representing how a domain is matched — either
 /// exactly or as a wildcard pattern covering one-level subdomains.

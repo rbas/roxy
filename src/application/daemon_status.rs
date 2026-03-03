@@ -52,3 +52,52 @@ impl<'a> QueryDaemonStatus<'a> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::testkit::*;
+    use crate::domain::{DomainPattern, PathPrefix, ProxyTarget, Route, RouteTarget};
+
+    fn registration(name: &str) -> DomainRegistration {
+        DomainRegistration::new(
+            DomainPattern::from_name(name, false).unwrap(),
+            vec![Route::new(
+                PathPrefix::new("/").unwrap(),
+                RouteTarget::Proxy(ProxyTarget::parse("3000").unwrap()),
+            )],
+        )
+    }
+
+    #[test]
+    fn reports_running_daemon_with_domains() {
+        let daemon = InMemoryDaemonControl::running(42);
+        let repo = InMemoryDomainRepository::with_domains(vec![registration("myapp.roxy")]);
+        let certs = InMemoryCertificateManager::with_ca_installed();
+        let network = InMemoryNetworkInfo::with_ip(Ipv4Addr::new(10, 0, 0, 1));
+        let svc = QueryDaemonStatus::new(&daemon, &repo, &certs, &network);
+
+        let status = svc.execute().unwrap();
+
+        assert_eq!(status.pid, Some(42));
+        assert_eq!(status.lan_ip, Ipv4Addr::new(10, 0, 0, 1));
+        assert!(status.ca_installed);
+        assert_eq!(status.domains.len(), 1);
+    }
+
+    #[test]
+    fn reports_stopped_daemon() {
+        let daemon = InMemoryDaemonControl::stopped();
+        let repo = InMemoryDomainRepository::new();
+        let certs = InMemoryCertificateManager::new();
+        let network = InMemoryNetworkInfo::unavailable();
+        let svc = QueryDaemonStatus::new(&daemon, &repo, &certs, &network);
+
+        let status = svc.execute().unwrap();
+
+        assert_eq!(status.pid, None);
+        assert_eq!(status.lan_ip, Ipv4Addr::LOCALHOST);
+        assert!(!status.ca_installed);
+        assert!(status.domains.is_empty());
+    }
+}

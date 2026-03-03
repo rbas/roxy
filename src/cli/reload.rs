@@ -17,7 +17,13 @@ pub fn execute(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Result<(
     let ready = service.execute(true)?;
 
     println!("Starting Roxy daemon...");
-    super::start::execute(false, verbose, config_path, &ready.paths, &ready.config)?;
+    super::start::execute(
+        false,
+        verbose,
+        config_path,
+        &ready.paths,
+        &ready.daemon_config,
+    )?;
 
     println!("Daemon reloaded with updated configuration.");
     Ok(())

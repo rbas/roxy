@@ -24,3 +24,28 @@ impl<'a> StopDaemon<'a> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::testkit::*;
+
+    #[test]
+    fn stops_running_daemon() {
+        let daemon = InMemoryDaemonControl::running(1234);
+        let svc = StopDaemon::new(&daemon);
+
+        svc.execute().unwrap();
+
+        assert!(!daemon.is_running().unwrap());
+    }
+
+    #[test]
+    fn fails_when_daemon_not_running() {
+        let daemon = InMemoryDaemonControl::stopped();
+        let svc = StopDaemon::new(&daemon);
+
+        let err = svc.execute().err().unwrap();
+        assert!(err.to_string().contains("not running"));
+    }
+}

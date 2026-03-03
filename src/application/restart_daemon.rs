@@ -2,14 +2,13 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 
-use crate::infrastructure::config::Config;
-use crate::infrastructure::paths::RoxyPaths;
+use crate::config::{DaemonConfig, RoxyPaths};
 
 use super::ports::{ConfigLoader, DaemonControl};
 
-/// Fresh config + paths ready for starting the daemon after a stop.
+/// Fresh daemon config + paths ready for starting the daemon after a stop.
 pub struct RestartReady {
-    pub config: Config,
+    pub daemon_config: DaemonConfig,
     pub paths: RoxyPaths,
 }
 
@@ -49,12 +48,63 @@ impl<'a> RestartDaemon<'a> {
         }
 
         // Re-load config from disk to pick up changes
-        let fresh_config = self.config_loader.load()?;
-        let fresh_paths = fresh_config.paths.clone();
+        let (daemon_config, paths) = self.config_loader.load()?;
 
         Ok(RestartReady {
-            config: fresh_config,
-            paths: fresh_paths,
+            daemon_config,
+            paths,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::testkit::*;
+
+    #[test]
+    fn restarts_running_daemon() {
+        let daemon = InMemoryDaemonControl::running(1234);
+        let loader = InMemoryConfigLoader::existing();
+        let svc = RestartDaemon::new(&daemon, &loader);
+
+        let ready = svc.execute(false).unwrap();
+
+        // Daemon was stopped
+        assert!(!daemon.is_running().unwrap());
+        // Returns fresh config for re-start
+        assert_eq!(ready.daemon_config.http_port, 80);
+    }
+
+    #[test]
+    fn restart_tolerates_stopped_daemon() {
+        let daemon = InMemoryDaemonControl::stopped();
+        let loader = InMemoryConfigLoader::existing();
+        let svc = RestartDaemon::new(&daemon, &loader);
+
+        let ready = svc.execute(false).unwrap();
+        assert_eq!(ready.daemon_config.http_port, 80);
+    }
+
+    #[test]
+    fn reload_fails_when_daemon_not_running() {
+        let daemon = InMemoryDaemonControl::stopped();
+        let loader = InMemoryConfigLoader::existing();
+        let svc = RestartDaemon::new(&daemon, &loader);
+
+        let err = svc.execute(true).err().unwrap();
+        assert!(err.to_string().contains("not running"));
+    }
+
+    #[test]
+    fn reload_succeeds_when_daemon_running() {
+        let daemon = InMemoryDaemonControl::running(5678);
+        let loader = InMemoryConfigLoader::existing();
+        let svc = RestartDaemon::new(&daemon, &loader);
+
+        let ready = svc.execute(true).unwrap();
+
+        assert!(!daemon.is_running().unwrap());
+        assert_eq!(ready.daemon_config.dns_port, 1053);
     }
 }

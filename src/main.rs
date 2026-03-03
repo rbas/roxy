@@ -6,6 +6,7 @@ use clap_complete::Shell;
 
 mod application;
 mod cli;
+mod config;
 mod daemon;
 mod domain;
 mod infrastructure;
@@ -212,7 +213,7 @@ fn main() -> Result<()> {
         },
         Commands::List => cli::list::execute(config_path, &paths),
         Commands::Start { foreground } => {
-            cli::start::execute(foreground, cli.verbose, config_path, &paths, &config)
+            cli::start::execute(foreground, cli.verbose, config_path, &paths, &config.daemon)
         }
         Commands::Stop => cli::stop::execute(&paths),
         Commands::Restart => cli::restart::execute(cli.verbose, config_path, &paths),

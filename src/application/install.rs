@@ -2,8 +2,6 @@ use std::net::Ipv4Addr;
 
 use anyhow::Result;
 
-use crate::infrastructure::config::Config;
-
 use super::StepOutcome;
 use super::ports::{CertificateManager, ConfigLoader, DnsManager, NetworkInfo, SystemSetup};
 
@@ -20,7 +18,7 @@ pub struct Install<'a> {
     dns: &'a dyn DnsManager,
     network: &'a dyn NetworkInfo,
     system: &'a dyn SystemSetup,
-    config: &'a Config,
+    dns_port: u16,
 }
 
 impl<'a> Install<'a> {
@@ -30,7 +28,7 @@ impl<'a> Install<'a> {
         dns: &'a dyn DnsManager,
         network: &'a dyn NetworkInfo,
         system: &'a dyn SystemSetup,
-        config: &'a Config,
+        dns_port: u16,
     ) -> Self {
         Self {
             certs,
@@ -38,14 +36,14 @@ impl<'a> Install<'a> {
             dns,
             network,
             system,
-            config,
+            dns_port,
         }
     }
 
     pub fn execute(&self) -> Result<InstallResult> {
         let mut steps: Vec<(String, StepOutcome)> = Vec::new();
         let lan_ip = self.network.lan_ip().unwrap_or(Ipv4Addr::LOCALHOST);
-        let dns_port = self.config.daemon.dns_port;
+        let dns_port = self.dns_port;
 
         self.create_directories(&mut steps)?;
         self.ensure_config_file(&mut steps)?;
@@ -66,7 +64,7 @@ impl<'a> Install<'a> {
 
     fn ensure_config_file(&self, steps: &mut Vec<(String, StepOutcome)>) -> Result<()> {
         if !self.config_loader.exists() {
-            self.config_loader.save(self.config)?;
+            self.config_loader.save_defaults()?;
             steps.push((
                 "Config file".into(),
                 StepOutcome::Success("Created config file.".into()),
@@ -113,5 +111,139 @@ impl<'a> Install<'a> {
             StepOutcome::Success("DNS validation passed.".into()),
         ));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+    use crate::application::testkit::*;
+
+    fn make_install<'a>(
+        certs: &'a InMemoryCertificateManager,
+        config: &'a InMemoryConfigLoader,
+        dns: &'a InMemoryDnsManager,
+        network: &'a InMemoryNetworkInfo,
+        system: &'a InMemorySystemSetup,
+    ) -> Install<'a> {
+        Install::new(certs, config, dns, network, system, 1053)
+    }
+
+    #[test]
+    fn fresh_install_creates_everything() {
+        let certs = InMemoryCertificateManager::new();
+        let config = InMemoryConfigLoader::new();
+        let dns = InMemoryDnsManager::new();
+        let network = InMemoryNetworkInfo::with_ip(Ipv4Addr::new(192, 168, 1, 100));
+        let system = InMemorySystemSetup::new();
+        let svc = make_install(&certs, &config, &dns, &network, &system);
+
+        let result = svc.execute().unwrap();
+
+        assert_eq!(result.lan_ip, Ipv4Addr::new(192, 168, 1, 100));
+        // Config file was created
+        assert!(config.exists());
+        // DNS was configured
+        assert!(dns.is_configured());
+        // All steps should be Success
+        for (_, outcome) in &result.steps {
+            assert!(
+                matches!(outcome, StepOutcome::Success(_)),
+                "expected Success, got: {:?}",
+                outcome
+            );
+        }
+    }
+
+    #[test]
+    fn install_skips_existing_config() {
+        let certs = InMemoryCertificateManager::new();
+        let config = InMemoryConfigLoader::existing();
+        let dns = InMemoryDnsManager::new();
+        let network = InMemoryNetworkInfo::with_ip(Ipv4Addr::LOCALHOST);
+        let system = InMemorySystemSetup::new();
+        let svc = make_install(&certs, &config, &dns, &network, &system);
+
+        let result = svc.execute().unwrap();
+
+        let config_step = result
+            .steps
+            .iter()
+            .find(|(label, _)| label == "Config file")
+            .unwrap();
+        assert!(matches!(config_step.1, StepOutcome::Skipped(_)));
+    }
+
+    #[test]
+    fn install_skips_existing_dns() {
+        let certs = InMemoryCertificateManager::new();
+        let config = InMemoryConfigLoader::new();
+        let dns = InMemoryDnsManager::already_configured();
+        let network = InMemoryNetworkInfo::with_ip(Ipv4Addr::LOCALHOST);
+        let system = InMemorySystemSetup::new();
+        let svc = make_install(&certs, &config, &dns, &network, &system);
+
+        let result = svc.execute().unwrap();
+
+        let dns_step = result
+            .steps
+            .iter()
+            .find(|(label, _)| label == "DNS configuration")
+            .unwrap();
+        assert!(matches!(dns_step.1, StepOutcome::Skipped(_)));
+    }
+
+    #[test]
+    fn install_skips_existing_ca() {
+        let certs = InMemoryCertificateManager::with_ca_installed();
+        let config = InMemoryConfigLoader::new();
+        let dns = InMemoryDnsManager::new();
+        let network = InMemoryNetworkInfo::with_ip(Ipv4Addr::LOCALHOST);
+        let system = InMemorySystemSetup::new();
+        let svc = make_install(&certs, &config, &dns, &network, &system);
+
+        let result = svc.execute().unwrap();
+
+        let ca_step = result
+            .steps
+            .iter()
+            .find(|(label, _)| label == "Root CA")
+            .unwrap();
+        assert!(matches!(ca_step.1, StepOutcome::Skipped(_)));
+    }
+
+    #[test]
+    fn install_warns_on_ca_failure() {
+        let certs = InMemoryCertificateManager::always_failing();
+        let config = InMemoryConfigLoader::new();
+        let dns = InMemoryDnsManager::new();
+        let network = InMemoryNetworkInfo::with_ip(Ipv4Addr::LOCALHOST);
+        let system = InMemorySystemSetup::new();
+        let svc = make_install(&certs, &config, &dns, &network, &system);
+
+        let result = svc.execute().unwrap();
+
+        let ca_step = result
+            .steps
+            .iter()
+            .find(|(label, _)| label == "Root CA")
+            .unwrap();
+        assert!(matches!(ca_step.1, StepOutcome::Warning(_)));
+    }
+
+    #[test]
+    fn install_falls_back_to_localhost() {
+        let certs = InMemoryCertificateManager::new();
+        let config = InMemoryConfigLoader::new();
+        let dns = InMemoryDnsManager::new();
+        let network = InMemoryNetworkInfo::unavailable();
+        let system = InMemorySystemSetup::new();
+        let svc = make_install(&certs, &config, &dns, &network, &system);
+
+        let result = svc.execute().unwrap();
+
+        assert_eq!(result.lan_ip, Ipv4Addr::LOCALHOST);
     }
 }

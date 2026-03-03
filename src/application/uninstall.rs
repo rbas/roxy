@@ -150,3 +150,100 @@ impl<'a> Uninstall<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::testkit::*;
+    use crate::domain::{
+        DomainPattern, DomainRegistration, PathPrefix, ProxyTarget, Route, RouteTarget,
+    };
+
+    fn registration(name: &str) -> DomainRegistration {
+        DomainRegistration::new(
+            DomainPattern::from_name(name, false).unwrap(),
+            vec![Route::new(
+                PathPrefix::new("/").unwrap(),
+                RouteTarget::Proxy(ProxyTarget::parse("3000").unwrap()),
+            )],
+        )
+    }
+
+    #[test]
+    fn uninstall_stops_daemon_and_cleans_up() {
+        let repo = InMemoryDomainRepository::with_domains(vec![registration("myapp.roxy")]);
+        let certs = InMemoryCertificateManager::new();
+        let daemon = InMemoryDaemonControl::running(999);
+        let dns = InMemoryDnsManager::already_configured();
+        let system = InMemorySystemSetup::with_existing_data();
+        let svc = Uninstall::new(&repo, &certs, &daemon, &dns, &system, "/etc/roxy".into());
+
+        let result = svc.execute().unwrap();
+
+        // Daemon stopped
+        assert!(!daemon.is_running().unwrap());
+        // DNS cleaned
+        assert!(!dns.is_configured());
+        // All steps present
+        assert!(!result.steps.is_empty());
+    }
+
+    #[test]
+    fn uninstall_skips_when_daemon_not_running() {
+        let repo = InMemoryDomainRepository::new();
+        let certs = InMemoryCertificateManager::new();
+        let daemon = InMemoryDaemonControl::stopped();
+        let dns = InMemoryDnsManager::new();
+        let system = InMemorySystemSetup::new();
+        let svc = Uninstall::new(&repo, &certs, &daemon, &dns, &system, "/etc/roxy".into());
+
+        let result = svc.execute().unwrap();
+
+        let daemon_step = result
+            .steps
+            .iter()
+            .find(|(label, _)| label == "Stop daemon")
+            .unwrap();
+        assert!(matches!(daemon_step.1, StepOutcome::Skipped(_)));
+    }
+
+    #[test]
+    fn preview_shows_domain_count() {
+        let repo = InMemoryDomainRepository::with_domains(vec![
+            registration("a.roxy"),
+            registration("b.roxy"),
+        ]);
+        let certs = InMemoryCertificateManager::new();
+        let daemon = InMemoryDaemonControl::stopped();
+        let dns = InMemoryDnsManager::new();
+        let system = InMemorySystemSetup::new();
+        let svc = Uninstall::new(&repo, &certs, &daemon, &dns, &system, "/etc/roxy".into());
+
+        let preview = svc.preview().unwrap();
+        assert_eq!(preview.domain_count, 2);
+        assert_eq!(preview.data_dir, "/etc/roxy");
+    }
+
+    #[test]
+    fn uninstall_warns_on_cert_removal_failure() {
+        let repo = InMemoryDomainRepository::with_domains(vec![registration("myapp.roxy")]);
+        let certs = InMemoryCertificateManager::always_failing();
+        let daemon = InMemoryDaemonControl::stopped();
+        let dns = InMemoryDnsManager::new();
+        let system = InMemorySystemSetup::new();
+        let svc = Uninstall::new(&repo, &certs, &daemon, &dns, &system, "/etc/roxy".into());
+
+        let result = svc.execute().unwrap();
+
+        // Cert removal should warn, not fail the whole operation
+        let cert_steps: Vec<_> = result
+            .steps
+            .iter()
+            .filter(|(label, _)| label.starts_with("Remove cert"))
+            .collect();
+        assert!(!cert_steps.is_empty());
+        for (_, outcome) in cert_steps {
+            assert!(matches!(outcome, StepOutcome::Warning(_)));
+        }
+    }
+}
