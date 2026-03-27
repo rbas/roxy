@@ -23,7 +23,17 @@ impl Port {
         Ok(Self(port))
     }
 
-    #[cfg(test)]
+    /// Create a port allowing the full 1..=65535 range.
+    ///
+    /// Use for targets where Roxy connects as a client (e.g., container
+    /// ports mapped to the host) rather than user-configured services.
+    pub fn any(port: u16) -> Result<Self, PortError> {
+        if port == 0 {
+            return Err(PortError::OutOfRange(port));
+        }
+        Ok(Self(port))
+    }
+
     pub fn value(&self) -> u16 {
         self.0
     }
@@ -70,5 +80,23 @@ mod tests {
         assert!(Port::new(0).is_err());
         assert!(Port::new(80).is_err()); // Privileged
         assert!(Port::new(443).is_err()); // Privileged
+    }
+
+    #[test]
+    fn test_any_port_allows_privileged() {
+        assert!(Port::any(80).is_ok());
+        assert!(Port::any(443).is_ok());
+        assert_eq!(Port::any(80).unwrap().value(), 80);
+    }
+
+    #[test]
+    fn test_any_port_rejects_zero() {
+        assert!(Port::any(0).is_err());
+    }
+
+    #[test]
+    fn test_any_port_allows_high_ports() {
+        assert!(Port::any(3000).is_ok());
+        assert!(Port::any(65535).is_ok());
     }
 }

@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -9,8 +8,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::router::SharedState;
-use crate::application::ports::RegistrationProvider;
-use crate::domain::DomainRegistration;
 
 /// Management commands sent over the Unix socket.
 #[derive(Debug, Deserialize)]
@@ -73,6 +70,15 @@ fn parse_command(line: &str) -> Option<MgmtCommand> {
     }
 }
 
+/// Daemon port configuration passed to the management socket
+/// so status responses include actual configured ports.
+#[derive(Debug, Clone, Copy)]
+pub struct DaemonPorts {
+    pub http: u16,
+    pub https: u16,
+    pub dns: u16,
+}
+
 /// Serve management commands on a Unix domain socket.
 ///
 /// The socket accepts one command per connection (JSON-over-lines protocol).
@@ -80,9 +86,9 @@ fn parse_command(line: &str) -> Option<MgmtCommand> {
 pub async fn serve(
     socket_path: PathBuf,
     state: SharedState,
-    reload_provider: Arc<dyn RegistrationProvider>,
-    reload_tx: mpsc::Sender<Vec<DomainRegistration>>,
+    reload_tx: mpsc::Sender<()>,
     cancel: CancellationToken,
+    ports: DaemonPorts,
 ) -> anyhow::Result<()> {
     // Remove stale socket file if it exists
     let _ = std::fs::remove_file(&socket_path);
@@ -105,7 +111,6 @@ pub async fn serve(
         };
 
         let state = state.clone();
-        let reload_provider = reload_provider.clone();
         let reload_tx = reload_tx.clone();
 
         tokio::spawn(async move {
@@ -126,33 +131,48 @@ pub async fn serve(
                     MgmtResponse::success(serde_json::json!({
                         "pid": pid,
                         "registration_count": count,
+                        "http_port": ports.http,
+                        "https_port": ports.https,
+                        "dns_port": ports.dns,
                     }))
                 }
                 Some(MgmtCommand::List) => {
                     let snapshot = state.load();
-                    let domains: Vec<String> = snapshot
+                    let domains: Vec<serde_json::Value> = snapshot
                         .registrations()
                         .iter()
-                        .map(|r| r.display_pattern())
+                        .map(|r| {
+                            let routes: Vec<serde_json::Value> = r
+                                .routes()
+                                .iter()
+                                .map(|route| {
+                                    serde_json::json!({
+                                        "path": route.path().as_str(),
+                                        "target": route.target().to_string(),
+                                    })
+                                })
+                                .collect();
+                            serde_json::json!({
+                                "pattern": r.display_pattern(),
+                                "source": r.source().to_string(),
+                                "https": r.is_https_enabled(),
+                                "routes": routes,
+                            })
+                        })
                         .collect();
                     MgmtResponse::success(serde_json::json!({
                         "domains": domains,
                     }))
                 }
-                Some(MgmtCommand::Reload) => match reload_provider.load() {
-                    Ok(regs) => {
-                        let count = regs.len();
-                        if reload_tx.send(regs).await.is_ok() {
-                            MgmtResponse::success(serde_json::json!({
-                                "reloaded": true,
-                                "registration_count": count,
-                            }))
-                        } else {
-                            MgmtResponse::error("Reload channel closed")
-                        }
+                Some(MgmtCommand::Reload) => {
+                    if reload_tx.send(()).await.is_ok() {
+                        MgmtResponse::success(serde_json::json!({
+                            "reloaded": true,
+                        }))
+                    } else {
+                        MgmtResponse::error("Reload channel closed")
                     }
-                    Err(e) => MgmtResponse::error(format!("Failed to load config: {e}")),
-                },
+                }
                 None => MgmtResponse::error(format!("Unknown command: {}", line.trim())),
             };
 
@@ -174,8 +194,9 @@ pub async fn serve(
 mod tests {
     use super::*;
     use crate::daemon::router::RuntimeState;
-    use crate::domain::{DomainName, DomainPattern, Route};
+    use crate::domain::{DomainName, DomainPattern, DomainRegistration, Route};
     use arc_swap::ArcSwap;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::net::UnixStream;
 
@@ -186,44 +207,32 @@ mod tests {
         DomainRegistration::new(pattern, routes)
     }
 
-    struct FixedProvider {
-        registrations: Vec<DomainRegistration>,
-    }
-
-    impl RegistrationProvider for FixedProvider {
-        fn name(&self) -> &str {
-            "fixed"
-        }
-        fn load(&self) -> anyhow::Result<Vec<DomainRegistration>> {
-            Ok(self.registrations.clone())
-        }
-    }
-
     /// Helper: start the management socket and return what tests need to interact with it.
     /// Returns the TempDir to keep it alive for the socket path.
     async fn start_server(
         registrations: Vec<DomainRegistration>,
-        provider_regs: Vec<DomainRegistration>,
     ) -> (
         PathBuf,
         CancellationToken,
-        mpsc::Receiver<Vec<DomainRegistration>>,
+        mpsc::Receiver<()>,
         tempfile::TempDir,
     ) {
         let dir = tempfile::tempdir().unwrap();
         let sock = dir.path().join("test.sock");
 
         let state: SharedState = Arc::new(ArcSwap::from_pointee(RuntimeState::new(registrations)));
-        let provider: Arc<dyn RegistrationProvider> = Arc::new(FixedProvider {
-            registrations: provider_regs,
-        });
-        let (reload_tx, reload_rx) = mpsc::channel(4);
+        let (reload_tx, reload_rx) = mpsc::channel::<()>(4);
         let cancel = CancellationToken::new();
 
         let cancel_serve = cancel.clone();
         let sock_clone = sock.clone();
+        let test_ports = DaemonPorts {
+            http: 80,
+            https: 443,
+            dns: 1053,
+        };
         tokio::spawn(async move {
-            let _ = serve(sock_clone, state, provider, reload_tx, cancel_serve).await;
+            let _ = serve(sock_clone, state, reload_tx, cancel_serve, test_ports).await;
         });
 
         // Give the listener time to bind
@@ -288,7 +297,7 @@ mod tests {
     #[tokio::test]
     async fn serve_status_returns_pid_and_count() {
         let (sock, cancel, _rx, _dir) =
-            start_server(vec![test_reg("app.roxy"), test_reg("api.roxy")], vec![]).await;
+            start_server(vec![test_reg("app.roxy"), test_reg("api.roxy")]).await;
 
         let resp = send_command(&sock, r#"{"cmd":"status"}"#).await;
         assert_eq!(resp["ok"], true);
@@ -299,45 +308,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn serve_list_returns_domain_names() {
-        let (sock, cancel, _rx, _dir) = start_server(vec![test_reg("app.roxy")], vec![]).await;
+    async fn serve_list_returns_domain_details() {
+        let (sock, cancel, _rx, _dir) = start_server(vec![test_reg("app.roxy")]).await;
 
         let resp = send_command(&sock, r#"{"cmd":"list"}"#).await;
         assert_eq!(resp["ok"], true);
         let domains = resp["data"]["domains"].as_array().unwrap();
         assert_eq!(domains.len(), 1);
-        assert_eq!(domains[0], "app.roxy");
+        assert_eq!(domains[0]["pattern"], "app.roxy");
+        assert_eq!(domains[0]["source"], "config");
+        assert_eq!(domains[0]["https"], false);
+        let routes = domains[0]["routes"].as_array().unwrap();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0]["path"], "/");
 
         cancel.cancel();
     }
 
     #[tokio::test]
     async fn serve_reload_pushes_to_channel() {
-        let (sock, cancel, mut rx, _dir) = start_server(
-            vec![test_reg("old.roxy")],
-            vec![test_reg("new.roxy")], // provider returns this on reload
-        )
-        .await;
+        let (sock, cancel, mut rx, _dir) = start_server(vec![test_reg("old.roxy")]).await;
 
         let resp = send_command(&sock, r#"{"cmd":"reload"}"#).await;
         assert_eq!(resp["ok"], true);
         assert_eq!(resp["data"]["reloaded"], true);
-        assert_eq!(resp["data"]["registration_count"], 1);
 
-        // Verify the reload channel received the new registrations
-        let regs = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        // Verify the reload channel received a nudge
+        tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("timed out")
             .expect("channel closed");
-        assert_eq!(regs.len(), 1);
-        assert_eq!(regs[0].domain().as_str(), "new.roxy");
 
         cancel.cancel();
     }
 
     #[tokio::test]
     async fn serve_unknown_command_returns_error() {
-        let (sock, cancel, _rx, _dir) = start_server(vec![], vec![]).await;
+        let (sock, cancel, _rx, _dir) = start_server(vec![]).await;
 
         let resp = send_command(&sock, "foobar").await;
         assert_eq!(resp["ok"], false);
@@ -348,7 +355,7 @@ mod tests {
 
     #[tokio::test]
     async fn serve_plain_text_status() {
-        let (sock, cancel, _rx, _dir) = start_server(vec![test_reg("app.roxy")], vec![]).await;
+        let (sock, cancel, _rx, _dir) = start_server(vec![test_reg("app.roxy")]).await;
 
         let resp = send_command(&sock, "status").await;
         assert_eq!(resp["ok"], true);
@@ -359,7 +366,7 @@ mod tests {
 
     #[tokio::test]
     async fn serve_cleans_up_socket_on_cancel() {
-        let (sock, cancel, _rx, _dir) = start_server(vec![], vec![]).await;
+        let (sock, cancel, _rx, _dir) = start_server(vec![]).await;
         assert!(sock.exists());
 
         cancel.cancel();

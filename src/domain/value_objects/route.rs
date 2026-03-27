@@ -7,8 +7,8 @@ use thiserror::Error;
 
 #[derive(Debug, Clone)]
 pub struct Route {
-    pub path: PathPrefix,
-    pub target: RouteTarget,
+    path: PathPrefix,
+    target: RouteTarget,
 }
 
 #[derive(Debug, Clone)]
@@ -42,25 +42,18 @@ pub enum RouteError {
 }
 
 impl RouteTarget {
-    /// Parse target string: absolute path (starting with /) = static files, otherwise proxy
-    /// Note: To distinguish from PathPrefix, static file paths must exist on disk
+    /// Parse target string: absolute path (starting with /) = static files, otherwise proxy.
+    ///
+    /// This is pure parsing — no filesystem I/O. Callers that need to verify
+    /// the path exists should do so at the application or CLI layer.
     pub fn parse(s: &str) -> Result<Self, RouteTargetError> {
-        // If it starts with / and looks like a filesystem path, try static files
         if s.starts_with('/') {
-            let path = PathBuf::from(s);
-            if path.exists() {
-                if !path.is_dir() {
-                    return Err(RouteTargetError::NotADirectory(path));
-                }
-                return Ok(Self::StaticFiles(path.canonicalize().unwrap_or(path)));
-            }
-            // Path doesn't exist - could be a typo, report it
-            return Err(RouteTargetError::PathNotFound(path));
+            Ok(Self::StaticFiles(PathBuf::from(s)))
+        } else {
+            Ok(Self::Proxy(ProxyTarget::parse(s)?))
         }
-
-        // Otherwise it's a proxy target
-        Ok(Self::Proxy(ProxyTarget::parse(s)?))
     }
+
 }
 
 impl fmt::Display for RouteTarget {
@@ -104,6 +97,14 @@ impl<'de> Deserialize<'de> for RouteTarget {
 impl Route {
     pub fn new(path: PathPrefix, target: RouteTarget) -> Self {
         Self { path, target }
+    }
+
+    pub fn path(&self) -> &PathPrefix {
+        &self.path
+    }
+
+    pub fn target(&self) -> &RouteTarget {
+        &self.target
     }
 
     /// Parse from CLI format: "PATH=TARGET" e.g., "/api=3001" or "/=3000"
@@ -158,20 +159,20 @@ mod tests {
     #[test]
     fn test_parse_proxy_route() {
         let route = Route::parse("/api=3001").unwrap();
-        assert_eq!(route.path.to_string(), "/api");
-        assert!(matches!(route.target, RouteTarget::Proxy(_)));
+        assert_eq!(route.path().to_string(), "/api");
+        assert!(matches!(route.target(), RouteTarget::Proxy(_)));
     }
 
     #[test]
     fn test_parse_root_route() {
         let route = Route::parse("/=3000").unwrap();
-        assert_eq!(route.path.to_string(), "/");
+        assert_eq!(route.path().to_string(), "/");
     }
 
     #[test]
     fn test_parse_with_host() {
         let route = Route::parse("/api=192.168.1.50:3001").unwrap();
-        let RouteTarget::Proxy(proxy) = &route.target else {
+        let RouteTarget::Proxy(proxy) = route.target() else {
             panic!("expected proxy target");
         };
         assert_eq!(proxy.host(), "192.168.1.50");

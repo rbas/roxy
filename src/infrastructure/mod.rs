@@ -1,8 +1,10 @@
 pub mod certs;
 pub mod config;
 pub mod dns;
+pub mod docker;
 pub mod file_security;
 pub mod filesystem;
+pub mod mgmt_client;
 pub mod network;
 pub mod paths;
 pub mod pid;

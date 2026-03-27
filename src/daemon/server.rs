@@ -19,7 +19,6 @@ use super::proxy::{ClientAddr, Scheme};
 use super::router::{RuntimeState, SharedState, create_router};
 use super::tls::create_tls_acceptor;
 use crate::application::ports::RegistrationProvider;
-use crate::domain::DomainRegistration;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::paths::RoxyPaths;
@@ -36,8 +35,8 @@ async fn inject_client_addr(
 
 pub struct Server {
     state: SharedState,
-    reload_rx: mpsc::Receiver<Vec<DomainRegistration>>,
-    reload_tx: mpsc::Sender<Vec<DomainRegistration>>,
+    reload_rx: mpsc::Receiver<()>,
+    reload_tx: mpsc::Sender<()>,
     reload_provider: Arc<dyn RegistrationProvider>,
     socket_path: PathBuf,
     tls_acceptor: Option<TlsAcceptor>,
@@ -51,8 +50,8 @@ impl Server {
     pub fn new(
         config: &Config,
         paths: &RoxyPaths,
-        reload_rx: mpsc::Receiver<Vec<DomainRegistration>>,
-        reload_tx: mpsc::Sender<Vec<DomainRegistration>>,
+        reload_rx: mpsc::Receiver<()>,
+        reload_tx: mpsc::Sender<()>,
         reload_provider: Arc<dyn RegistrationProvider>,
     ) -> Result<Self> {
         // Validate config before starting
@@ -97,174 +96,227 @@ impl Server {
             "Roxy daemon starting"
         );
 
-        // Start DNS server with LAN IP (handles source-based IP resolution internally)
-        let dns_server = DnsServer::new(self.dns_port, self.lan_ip);
-        let dns_handle = tokio::spawn(async move {
-            if let Err(e) = dns_server.run().await {
-                error!(error = %e, "DNS server error");
-            }
-        });
+        let dns_handle = spawn_dns_server(self.dns_port, self.lan_ip);
+        spawn_reload_listener(
+            self.state.clone(),
+            self.reload_rx,
+            self.reload_provider,
+            cancel.clone(),
+        );
+        spawn_mgmt_socket(
+            self.state.clone(),
+            self.reload_tx,
+            self.socket_path,
+            self.http_port,
+            self.https_port,
+            self.dns_port,
+            cancel.clone(),
+        );
 
-        // Spawn reload listener — swaps RuntimeState when new registrations arrive
-        let state_for_reload = self.state.clone();
-        let cancel_reload = cancel.clone();
-        let mut reload_rx = self.reload_rx;
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = cancel_reload.cancelled() => break,
-                    msg = reload_rx.recv() => match msg {
-                        Some(regs) => {
-                            let count = regs.len();
-                            let new = Arc::new(RuntimeState::new(regs));
-                            state_for_reload.store(new);
-                            info!(count, "Runtime state reloaded");
-                        }
-                        None => break,
-                    }
-                }
-            }
-        });
+        let http_server =
+            start_http_server(self.state.clone(), self.http_port, cancel.clone()).await?;
 
-        // Spawn management socket for status/reload/list commands
-        let mgmt_cancel = cancel.clone();
-        tokio::spawn({
-            let state = self.state.clone();
-            let reload_tx = self.reload_tx.clone();
-            let reload_provider = self.reload_provider.clone();
-            let socket_path = self.socket_path.clone();
-            async move {
-                if let Err(e) = super::mgmt_socket::serve(
-                    socket_path,
-                    state,
-                    reload_provider,
-                    reload_tx,
-                    mgmt_cancel,
-                )
-                .await
-                {
-                    error!(error = %e, "Management socket error");
-                }
-            }
-        });
+        await_servers(
+            http_server,
+            dns_handle,
+            self.state,
+            self.tls_acceptor,
+            self.https_port,
+            cancel,
+        )
+        .await
+    }
+}
 
-        let http_addr = SocketAddr::from(([0, 0, 0, 0], self.http_port));
-        let https_addr = SocketAddr::from(([0, 0, 0, 0], self.https_port));
+fn spawn_dns_server(port: u16, lan_ip: Ipv4Addr) -> tokio::task::JoinHandle<()> {
+    let dns_server = DnsServer::new(port, lan_ip);
+    tokio::spawn(async move {
+        if let Err(e) = dns_server.run().await {
+            error!(error = %e, "DNS server error");
+        }
+    })
+}
 
-        // Start HTTP server - always serve content (no redirect to HTTPS)
-        let http_router = create_router(self.state.clone())
-            .layer(Extension(Scheme::Http))
-            .layer(axum::middleware::from_fn(inject_client_addr));
-
-        let http_listener = TcpListener::bind(http_addr).await.context(format!(
-            "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
-            self.http_port, self.http_port
-        ))?;
-
-        info!(addr = %http_addr, "HTTP server listening");
-
-        let http_server = tokio::spawn({
-            let cancel = cancel.clone();
-            async move {
-                axum::serve(
-                    http_listener,
-                    http_router.into_make_service_with_connect_info::<SocketAddr>(),
-                )
-                .with_graceful_shutdown(cancel.cancelled_owned())
-                .await
-                .map_err(|e| anyhow::anyhow!("HTTP server error: {}", e))
-            }
-        });
-
-        // Start HTTPS server if TLS is available
-        if let Some(tls_acceptor) = self.tls_acceptor {
-            let https_router = create_router(self.state).layer(Extension(Scheme::Https));
-            let https_listener = TcpListener::bind(https_addr).await.context(format!(
-                "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
-                self.https_port, self.https_port
-            ))?;
-
-            info!(addr = %https_addr, "HTTPS server listening");
-
-            let https_server = tokio::spawn({
-                let cancel = cancel.clone();
-                async move {
-                    loop {
-                        let (stream, addr) = tokio::select! {
-                            _ = cancel.cancelled() => break,
-                            result = https_listener.accept() => match result {
-                                Ok(conn) => conn,
-                                Err(e) => {
-                                    error!(error = %e, "Failed to accept connection");
-                                    continue;
-                                }
-                            },
-                        };
-
-                        let acceptor = tls_acceptor.clone();
-                        // The HTTPS path uses manual TLS accept, so ConnectInfo is not
-                        // available. Instead, inject the client IP directly as an Extension
-                        // on each accepted connection.
-                        let router = https_router.clone().layer(Extension(ClientAddr(addr.ip())));
-
-                        tokio::spawn(async move {
-                            let stream = match acceptor.accept(stream).await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    warn!(error = %e, "TLS handshake failed");
-                                    return;
-                                }
-                            };
-
-                            let io = hyper_util::rt::TokioIo::new(stream);
-                            let service = hyper_util::service::TowerToHyperService::new(
-                                router.into_service(),
-                            );
-
-                            if let Err(e) = hyper_util::server::conn::auto::Builder::new(
-                                hyper_util::rt::TokioExecutor::new(),
-                            )
-                            .serve_connection_with_upgrades(io, service)
-                            .await
-                            {
-                                error!(error = %e, "Error serving connection");
+fn spawn_reload_listener(
+    state: SharedState,
+    mut reload_rx: mpsc::Receiver<()>,
+    reload_provider: Arc<dyn RegistrationProvider>,
+    cancel: CancellationToken,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                msg = reload_rx.recv() => match msg {
+                    Some(()) => {
+                        match reload_provider.load() {
+                            Ok(regs) => {
+                                let count = regs.len();
+                                let new = Arc::new(RuntimeState::new(regs));
+                                state.store(new);
+                                info!(count, "Runtime state reloaded");
                             }
-                        });
+                            Err(e) => {
+                                warn!(error = %e, "Failed to load registrations during reload");
+                            }
+                        }
                     }
+                    None => break,
                 }
-            });
-
-            tokio::select! {
-                r = http_server => r??,
-                r = https_server => {
-                    if let Err(e) = r {
-                        error!(error = %e, "HTTPS server task failed");
-                        anyhow::bail!("HTTPS server task failed: {e}");
-                    }
-                },
-                r = dns_handle => {
-                    if let Err(e) = r {
-                        error!(error = %e, "DNS server task failed");
-                        anyhow::bail!("DNS server task failed: {e}");
-                    }
-                },
-            }
-        } else {
-            warn!(
-                "No HTTPS certificates found, running HTTP only. \
-                 Register a domain with sudo to enable HTTPS."
-            );
-            tokio::select! {
-                r = http_server => r??,
-                r = dns_handle => {
-                    if let Err(e) = r {
-                        error!(error = %e, "DNS server task failed");
-                        anyhow::bail!("DNS server task failed: {e}");
-                    }
-                },
             }
         }
+    });
+}
 
-        Ok(())
+fn spawn_mgmt_socket(
+    state: SharedState,
+    reload_tx: mpsc::Sender<()>,
+    socket_path: PathBuf,
+    http_port: u16,
+    https_port: u16,
+    dns_port: u16,
+    cancel: CancellationToken,
+) {
+    let mgmt_ports = super::mgmt_socket::DaemonPorts {
+        http: http_port,
+        https: https_port,
+        dns: dns_port,
+    };
+    tokio::spawn(async move {
+        if let Err(e) =
+            super::mgmt_socket::serve(socket_path, state, reload_tx, cancel, mgmt_ports).await
+        {
+            error!(error = %e, "Management socket error");
+        }
+    });
+}
+
+async fn start_http_server(
+    state: SharedState,
+    http_port: u16,
+    cancel: CancellationToken,
+) -> Result<tokio::task::JoinHandle<Result<()>>> {
+    let http_addr = SocketAddr::from(([0, 0, 0, 0], http_port));
+    let http_router = create_router(state)
+        .layer(Extension(Scheme::Http))
+        .layer(axum::middleware::from_fn(inject_client_addr));
+
+    let http_listener = TcpListener::bind(http_addr).await.context(format!(
+        "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
+        http_port, http_port
+    ))?;
+
+    info!(addr = %http_addr, "HTTP server listening");
+
+    Ok(tokio::spawn(async move {
+        axum::serve(
+            http_listener,
+            http_router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(cancel.cancelled_owned())
+        .await
+        .map_err(|e| anyhow::anyhow!("HTTP server error: {}", e))
+    }))
+}
+
+async fn start_https_server(
+    state: SharedState,
+    tls_acceptor: TlsAcceptor,
+    https_port: u16,
+    cancel: CancellationToken,
+) -> Result<tokio::task::JoinHandle<()>> {
+    let https_addr = SocketAddr::from(([0, 0, 0, 0], https_port));
+    let https_router = create_router(state).layer(Extension(Scheme::Https));
+    let https_listener = TcpListener::bind(https_addr).await.context(format!(
+        "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
+        https_port, https_port
+    ))?;
+
+    info!(addr = %https_addr, "HTTPS server listening");
+
+    Ok(tokio::spawn(async move {
+        loop {
+            let (stream, addr) = tokio::select! {
+                _ = cancel.cancelled() => break,
+                result = https_listener.accept() => match result {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        error!(error = %e, "Failed to accept connection");
+                        continue;
+                    }
+                },
+            };
+
+            let acceptor = tls_acceptor.clone();
+            let router = https_router.clone().layer(Extension(ClientAddr(addr.ip())));
+
+            tokio::spawn(async move {
+                let stream = match acceptor.accept(stream).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!(error = %e, "TLS handshake failed");
+                        return;
+                    }
+                };
+
+                let io = hyper_util::rt::TokioIo::new(stream);
+                let service = hyper_util::service::TowerToHyperService::new(router.into_service());
+
+                if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                    hyper_util::rt::TokioExecutor::new(),
+                )
+                .serve_connection_with_upgrades(io, service)
+                .await
+                {
+                    error!(error = %e, "Error serving connection");
+                }
+            });
+        }
+    }))
+}
+
+async fn await_servers(
+    http_server: tokio::task::JoinHandle<Result<()>>,
+    dns_handle: tokio::task::JoinHandle<()>,
+    state: SharedState,
+    tls_acceptor: Option<TlsAcceptor>,
+    https_port: u16,
+    cancel: CancellationToken,
+) -> Result<()> {
+    if let Some(tls_acceptor) = tls_acceptor {
+        let https_server =
+            start_https_server(state, tls_acceptor, https_port, cancel.clone()).await?;
+
+        tokio::select! {
+            r = http_server => r??,
+            r = https_server => {
+                if let Err(e) = r {
+                    error!(error = %e, "HTTPS server task failed");
+                    anyhow::bail!("HTTPS server task failed: {e}");
+                }
+            },
+            r = dns_handle => {
+                if let Err(e) = r {
+                    error!(error = %e, "DNS server task failed");
+                    anyhow::bail!("DNS server task failed: {e}");
+                }
+            },
+        }
+    } else {
+        warn!(
+            "No HTTPS certificates found, running HTTP only. \
+             Register a domain with sudo to enable HTTPS."
+        );
+        tokio::select! {
+            r = http_server => r??,
+            r = dns_handle => {
+                if let Err(e) = r {
+                    error!(error = %e, "DNS server task failed");
+                    anyhow::bail!("DNS server task failed: {e}");
+                }
+            },
+        }
     }
+
+    Ok(())
 }

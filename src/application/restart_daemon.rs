@@ -31,10 +31,17 @@ impl<'a> RestartDaemon<'a> {
         }
     }
 
-    /// Stop the current daemon (if running) and return fresh config for restarting.
-    ///
-    /// When `require_running` is true, returns an error if the daemon is not running.
-    pub fn execute(&self, require_running: bool) -> Result<RestartReady> {
+    /// Restart the daemon. Tolerates a stopped daemon (just re-reads config).
+    pub fn restart(&self) -> Result<RestartReady> {
+        self.stop_and_reload(false)
+    }
+
+    /// Reload the daemon. Fails if the daemon is not running.
+    pub fn reload(&self) -> Result<RestartReady> {
+        self.stop_and_reload(true)
+    }
+
+    fn stop_and_reload(&self, require_running: bool) -> Result<RestartReady> {
         let is_running = self.daemon.is_running()?;
 
         if require_running && !is_running {
@@ -43,8 +50,6 @@ impl<'a> RestartDaemon<'a> {
 
         if is_running {
             self.daemon.stop_gracefully(Duration::from_millis(500))?;
-            // Brief pause to ensure clean shutdown
-            std::thread::sleep(Duration::from_millis(500));
         }
 
         // Re-load config from disk to pick up changes
@@ -68,7 +73,7 @@ mod tests {
         let loader = InMemoryConfigLoader::existing();
         let svc = RestartDaemon::new(&daemon, &loader);
 
-        let ready = svc.execute(false).unwrap();
+        let ready = svc.restart().unwrap();
 
         // Daemon was stopped
         assert!(!daemon.is_running().unwrap());
@@ -82,7 +87,7 @@ mod tests {
         let loader = InMemoryConfigLoader::existing();
         let svc = RestartDaemon::new(&daemon, &loader);
 
-        let ready = svc.execute(false).unwrap();
+        let ready = svc.restart().unwrap();
         assert_eq!(ready.daemon_config.http_port, 80);
     }
 
@@ -92,7 +97,7 @@ mod tests {
         let loader = InMemoryConfigLoader::existing();
         let svc = RestartDaemon::new(&daemon, &loader);
 
-        let err = svc.execute(true).err().unwrap();
+        let err = svc.reload().err().unwrap();
         assert!(err.to_string().contains("not running"));
     }
 
@@ -102,7 +107,7 @@ mod tests {
         let loader = InMemoryConfigLoader::existing();
         let svc = RestartDaemon::new(&daemon, &loader);
 
-        let ready = svc.execute(true).unwrap();
+        let ready = svc.reload().unwrap();
 
         assert!(!daemon.is_running().unwrap());
         assert_eq!(ready.daemon_config.dns_port, 1053);

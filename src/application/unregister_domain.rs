@@ -56,22 +56,6 @@ impl<'a> UnregisterDomain<'a> {
 mod tests {
     use super::*;
     use crate::application::testkit::*;
-    use crate::domain::{PathPrefix, ProxyTarget, Route, RouteTarget};
-
-    fn proxy_route(path: &str, port: u16) -> Route {
-        Route::new(
-            PathPrefix::new(path).unwrap(),
-            RouteTarget::Proxy(ProxyTarget::parse(&port.to_string()).unwrap()),
-        )
-    }
-
-    fn exact(name: &str) -> DomainPattern {
-        DomainPattern::from_name(name, false).unwrap()
-    }
-
-    fn registration(name: &str) -> DomainRegistration {
-        DomainRegistration::new(exact(name), vec![proxy_route("/", 3000)])
-    }
 
     #[test]
     fn unregisters_domain_and_removes_cert() {

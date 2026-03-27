@@ -1,20 +1,15 @@
-use std::path::Path;
-
 use anyhow::Result;
 
+use super::context::AppContext;
 use crate::application::StepOutcome;
 use crate::application::register_domain::RegisterDomain;
 use crate::domain::{DomainPattern, Route};
-use crate::infrastructure::certs::CertificateService;
-use crate::infrastructure::config::ConfigStore;
-use crate::infrastructure::paths::RoxyPaths;
 
 pub fn execute(
     domain: String,
     wildcard: bool,
     routes: Vec<String>,
-    config_path: &Path,
-    paths: &RoxyPaths,
+    ctx: &AppContext,
 ) -> Result<()> {
     let pattern = DomainPattern::from_name(&domain, wildcard)?;
 
@@ -24,9 +19,7 @@ pub fn execute(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("Invalid route: {}", e))?;
 
-    let config_store = ConfigStore::new(config_path.to_path_buf());
-    let cert_service = CertificateService::new(paths);
-    let use_case = RegisterDomain::new(&config_store, &cert_service);
+    let use_case = RegisterDomain::new(&ctx.config_store, &ctx.cert_service);
 
     println!(
         "Generating SSL certificate for {}...",
@@ -54,7 +47,7 @@ pub fn execute(
     );
     println!("  Routes:");
     for route in result.registration.routes() {
-        println!("    {} -> {}", route.path, route.target);
+        println!("    {} -> {}", route.path(), route.target());
     }
     println!(
         "  HTTPS: {}",

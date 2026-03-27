@@ -156,16 +156,16 @@ async fn handle_request(
                 host = %host,
                 domain = %registration.domain(),
                 path = %path,
-                route = %route.path,
+                route = %route.path(),
                 "Routing request"
             );
 
             let proto = scheme.map(|Extension(s)| s.as_str()).unwrap_or("http");
             let client_ip = client_addr.map(|Extension(a)| a.0);
 
-            let response = match &route.target {
+            let response = match route.target() {
                 RouteTarget::StaticFiles(dir) => {
-                    serve_static(route.path.as_str(), dir.clone(), request).await
+                    serve_static(route.path().as_str(), dir.clone(), request).await
                 }
                 RouteTarget::Proxy(target) => {
                     proxy_request(target, request, host, proto, client_ip).await
@@ -445,7 +445,7 @@ mod tests {
                 route,
             } => {
                 assert_eq!(registration.domain().as_str(), "app.roxy");
-                assert_eq!(route.path.as_str(), "/");
+                assert_eq!(route.path().as_str(), "/");
             }
             other => panic!("expected Matched, got {:?}", other),
         }

@@ -1,10 +1,8 @@
-use std::path::Path;
-
 use anyhow::Result;
 
+use super::context::AppContext;
 use crate::application::manage_routes::ManageRoutes;
 use crate::domain::{DomainPattern, PathPrefix, RouteTarget};
-use crate::infrastructure::config::ConfigStore;
 
 /// Add a route to an existing domain
 pub fn add(
@@ -12,31 +10,29 @@ pub fn add(
     wildcard: bool,
     path: String,
     target: String,
-    config_path: &Path,
+    ctx: &AppContext,
 ) -> Result<()> {
     let pattern = DomainPattern::from_name(&domain, wildcard)?;
     let path_prefix = PathPrefix::new(&path)?;
     let route_target = RouteTarget::parse(&target)
         .map_err(|e| anyhow::anyhow!("Invalid target '{}': {}", target, e))?;
 
-    let config_store = ConfigStore::new(config_path.to_path_buf());
-    let use_case = ManageRoutes::new(&config_store);
+    let use_case = ManageRoutes::new(&ctx.config_store);
 
     let route = use_case.add_route(&pattern, path_prefix, route_target)?;
 
-    println!("Added route: {} -> {}", route.path, route.target);
+    println!("Added route: {} -> {}", route.path(), route.target());
     println!("\nReload the daemon to apply changes: roxy reload");
 
     Ok(())
 }
 
 /// Remove a route from a domain
-pub fn remove(domain: String, wildcard: bool, path: String, config_path: &Path) -> Result<()> {
+pub fn remove(domain: String, wildcard: bool, path: String, ctx: &AppContext) -> Result<()> {
     let pattern = DomainPattern::from_name(&domain, wildcard)?;
     let path_prefix = PathPrefix::new(&path)?;
 
-    let config_store = ConfigStore::new(config_path.to_path_buf());
-    let use_case = ManageRoutes::new(&config_store);
+    let use_case = ManageRoutes::new(&ctx.config_store);
 
     use_case.remove_route(&pattern, &path_prefix)?;
 
@@ -47,11 +43,10 @@ pub fn remove(domain: String, wildcard: bool, path: String, config_path: &Path) 
 }
 
 /// List all routes for a domain
-pub fn list(domain: String, wildcard: bool, config_path: &Path) -> Result<()> {
+pub fn list(domain: String, wildcard: bool, ctx: &AppContext) -> Result<()> {
     let pattern = DomainPattern::from_name(&domain, wildcard)?;
 
-    let config_store = ConfigStore::new(config_path.to_path_buf());
-    let use_case = ManageRoutes::new(&config_store);
+    let use_case = ManageRoutes::new(&ctx.config_store);
 
     let registration = use_case.list_routes(&pattern)?;
 
@@ -68,7 +63,7 @@ pub fn list(domain: String, wildcard: bool, config_path: &Path) -> Result<()> {
     println!("{}", "-".repeat(52));
 
     for route in registration.routes() {
-        println!("{:<20} {:<30}", route.path, route.target);
+        println!("{:<20} {:<30}", route.path(), route.target());
     }
 
     Ok(())

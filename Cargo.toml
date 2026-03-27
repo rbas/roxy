@@ -61,6 +61,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 simple-dns = "0.11"
 base64 = "0.22.1"
 
+# Docker
+bollard = "0.18"
+futures-util = "0.3"
+
 [profile.release]
 strip = true
 lto = true

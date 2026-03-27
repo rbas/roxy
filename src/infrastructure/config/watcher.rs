@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::mpsc;
@@ -35,13 +35,9 @@ impl ConfigFileProvider {
         self
     }
 
-    /// Poll the config file for mtime changes and send new registrations
+    /// Poll the config file for mtime changes and send a nudge
     /// through the channel when the file is modified.
-    pub async fn watch(
-        &self,
-        tx: mpsc::Sender<Vec<DomainRegistration>>,
-        cancel: CancellationToken,
-    ) {
+    pub async fn watch(&self, tx: mpsc::Sender<()>, cancel: CancellationToken) {
         let mut last_mtime = file_mtime(&self.config_path);
 
         loop {
@@ -56,13 +52,14 @@ impl ConfigFileProvider {
             }
             last_mtime = current_mtime;
 
+            // Verify the file is parseable before nudging
             match self.load() {
                 Ok(registrations) => {
                     let count = registrations.len();
-                    if tx.send(registrations).await.is_err() {
+                    if tx.send(()).await.is_err() {
                         break; // receiver dropped
                     }
-                    info!(count, "Config file changed, reloaded registrations");
+                    info!(count, "Config file changed, nudging reload");
                 }
                 Err(e) => {
                     warn!(error = %e, "Config file changed but failed to load, keeping old state");
@@ -83,7 +80,7 @@ impl RegistrationProvider for ConfigFileProvider {
     }
 }
 
-fn file_mtime(path: &PathBuf) -> Option<SystemTime> {
+fn file_mtime(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
 }
 
@@ -121,7 +118,7 @@ mod tests {
 
         let provider = ConfigFileProvider::new(config_path.clone())
             .with_poll_interval(Duration::from_millis(10));
-        let (tx, mut rx) = mpsc::channel(4);
+        let (tx, mut rx) = mpsc::channel::<()>(4);
         let cancel = CancellationToken::new();
 
         let cancel_watch = cancel.clone();
@@ -143,14 +140,11 @@ routes = [{ path = "/", target = "3000" }]
         )
         .unwrap();
 
-        // Should receive registrations within a few poll cycles
-        let regs = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        // Should receive a nudge within a few poll cycles
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
             .expect("timed out waiting for reload")
             .expect("channel closed");
-
-        assert_eq!(regs.len(), 1);
-        assert_eq!(regs[0].domain().as_str(), "app.roxy");
 
         cancel.cancel();
         handle.await.unwrap();
@@ -164,7 +158,7 @@ routes = [{ path = "/", target = "3000" }]
 
         let provider =
             ConfigFileProvider::new(config_path).with_poll_interval(Duration::from_millis(10));
-        let (tx, mut rx) = mpsc::channel(4);
+        let (tx, mut rx) = mpsc::channel::<()>(4);
         let cancel = CancellationToken::new();
 
         let cancel_watch = cancel.clone();
@@ -189,7 +183,7 @@ routes = [{ path = "/", target = "3000" }]
 
         let provider =
             ConfigFileProvider::new(config_path).with_poll_interval(Duration::from_millis(10));
-        let (tx, _rx) = mpsc::channel(4);
+        let (tx, _rx) = mpsc::channel::<()>(4);
         let cancel = CancellationToken::new();
 
         let cancel_watch = cancel.clone();
@@ -214,7 +208,7 @@ routes = [{ path = "/", target = "3000" }]
 
         let provider = ConfigFileProvider::new(config_path.clone())
             .with_poll_interval(Duration::from_millis(10));
-        let (tx, mut rx) = mpsc::channel(4);
+        let (tx, mut rx) = mpsc::channel::<()>(4);
         let cancel = CancellationToken::new();
 
         let cancel_watch = cancel.clone();
@@ -232,7 +226,7 @@ routes = [{ path = "/", target = "3000" }]
         // No message should be sent (parse failure keeps old state)
         assert!(rx.try_recv().is_err());
 
-        // Now write valid config — watcher should recover
+        // Now write valid config — watcher should recover and send a nudge
         std::fs::write(
             &config_path,
             r#"
@@ -243,12 +237,10 @@ routes = [{ path = "/", target = "4000" }]
         )
         .unwrap();
 
-        let regs = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
             .expect("timed out waiting for recovery reload")
             .expect("channel closed");
-        assert_eq!(regs.len(), 1);
-        assert_eq!(regs[0].domain().as_str(), "fixed.roxy");
 
         cancel.cancel();
     }

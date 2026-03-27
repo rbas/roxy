@@ -10,8 +10,7 @@ pub mod system_setup;
 
 pub use certificate_manager::{CertificateError, CertificateManager};
 pub use config_loader::{ConfigLoadError, ConfigLoader};
-#[allow(unused_imports)] // Used by testkit; CLI adapter comes later.
-pub use daemon_connection::{DaemonConnection, DaemonConnectionError, DaemonStatus};
+pub use daemon_connection::{DaemonConnection, DaemonConnectionError, DaemonRuntimeInfo};
 pub use daemon_control::DaemonControl;
 pub use dns_manager::{DnsConfigError, DnsManager};
 pub use domain_repository::{DomainRepository, RepositoryError};

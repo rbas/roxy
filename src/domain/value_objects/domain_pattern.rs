@@ -1,12 +1,6 @@
 use std::fmt;
 
-use super::domain_name::DomainName;
-
-/// Filename prefix for wildcard certificates stored on disk.
-///
-/// Uses underscores so it can't collide with a valid `.roxy` domain
-/// (underscores are rejected by `DomainName` validation).
-pub const WILDCARD_CERT_PREFIX: &str = "__wildcard__.";
+use super::domain_name::{DomainName, DomainNameError};
 
 /// Value object representing how a domain is matched — either
 /// exactly or as a wildcard pattern covering one-level subdomains.
@@ -23,7 +17,7 @@ impl DomainPattern {
     /// Build a `DomainPattern` from a raw domain name string and a
     /// wildcard flag. Validates the domain name and returns the
     /// appropriate variant.
-    pub fn from_name(name: &str, wildcard: bool) -> anyhow::Result<Self> {
+    pub fn from_name(name: &str, wildcard: bool) -> Result<Self, DomainNameError> {
         let domain = DomainName::new(name)?;
         Ok(if wildcard {
             Self::Wildcard(domain)
@@ -75,20 +69,6 @@ impl DomainPattern {
         match self {
             Self::Exact(d) => d.as_str().to_string(),
             Self::Wildcard(d) => format!("*.{}", d.as_str()),
-        }
-    }
-
-    /// Certificate file stem used for on-disk certificate naming.
-    ///
-    /// Exact domains use the domain directly (`myapp.roxy`).
-    /// Wildcard domains use the `__wildcard__.` prefix
-    /// (`__wildcard__.myapp.roxy`).
-    pub fn cert_name(&self) -> String {
-        match self {
-            Self::Exact(d) => d.as_str().to_string(),
-            Self::Wildcard(d) => {
-                format!("{}{}", WILDCARD_CERT_PREFIX, d.as_str())
-            }
         }
     }
 
@@ -221,21 +201,6 @@ mod tests {
     #[test]
     fn wildcard_display_pattern() {
         assert_eq!(wildcard("myapp.roxy").display_pattern(), "*.myapp.roxy");
-    }
-
-    // --- cert_name ---
-
-    #[test]
-    fn exact_cert_name() {
-        assert_eq!(exact("myapp.roxy").cert_name(), "myapp.roxy");
-    }
-
-    #[test]
-    fn wildcard_cert_name() {
-        assert_eq!(
-            wildcard("myapp.roxy").cert_name(),
-            "__wildcard__.myapp.roxy"
-        );
     }
 
     // --- specificity ---

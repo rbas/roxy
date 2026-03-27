@@ -97,6 +97,14 @@ fn default_socket_path() -> PathBuf {
     PathBuf::from("/etc/roxy/roxy.sock")
 }
 
+/// Docker integration configuration.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct DockerConfig {
+    /// Enable Docker auto-discovery of containers.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 /// All resolved paths needed by Roxy components.
 /// Loaded once from config, then passed to components via DI.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
