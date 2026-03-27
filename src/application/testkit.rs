@@ -173,9 +173,7 @@ impl CertificateManager for InMemoryCertificateManager {
                 "simulated cert failure"
             )));
         }
-        self.certs
-            .borrow_mut()
-            .push(pattern.display_pattern());
+        self.certs.borrow_mut().push(pattern.display_pattern());
         Ok(())
     }
 
@@ -202,9 +200,7 @@ impl CertificateManager for InMemoryCertificateManager {
     }
 
     fn exists(&self, pattern: &DomainPattern) -> bool {
-        self.certs
-            .borrow()
-            .contains(&pattern.display_pattern())
+        self.certs.borrow().contains(&pattern.display_pattern())
     }
 
     fn is_trusted(&self) -> Result<bool, CertificateError> {

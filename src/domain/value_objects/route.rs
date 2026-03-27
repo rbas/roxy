@@ -53,7 +53,6 @@ impl RouteTarget {
             Ok(Self::Proxy(ProxyTarget::parse(s)?))
         }
     }
-
 }
 
 impl fmt::Display for RouteTarget {
