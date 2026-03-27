@@ -12,7 +12,7 @@ HTTPS for every local project.
 - ✓ Test OAuth/webhooks locally with real HTTPS
 - ✓ See all traffic in real-time
 - ✓ Share work across devices
-- ✓ No nginx. No dnsmasq. No Docker. No YAML.
+- ✓ No nginx. No dnsmasq. No YAML.
 
 > ⚠️ **Early Development**: Roxy is ready for daily use on macOS and Linux,
 > but things may shift around.
@@ -123,6 +123,15 @@ No config files to manage.
   Go, Rust, PHP... anything on any port
 - ✓ **Shell completions** — Tab completion for bash, zsh, and fish
 
+**Docker Integration:**
+
+- ✓ **Auto-discovery** — Docker Compose services are automatically
+  registered as `.roxy` domains. Start a stack, get HTTPS instantly
+- ✓ **Zero config** — Enable once, then `docker compose up` is all
+  you need. No `roxy register` required
+- ✓ **Label-driven** — Fine-tune with `roxy.domain`, `roxy.port`,
+  and `roxy.wildcard` labels
+
 ## Real-World Examples
 
 ### Testing Stripe Webhooks Locally
@@ -170,6 +179,37 @@ roxy register myapp.roxy --wildcard \
 # https://globex.myapp.roxy     → tenant "globex"
 # No extra registration needed. Just add a subdomain and go.
 ```
+
+### Docker Compose — Zero-Config HTTPS
+
+With Docker integration enabled, `docker compose up` is all
+you need:
+
+```yaml
+# docker-compose.yml
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+
+  api:
+    build: ./api
+    ports:
+      - "8080:8080"
+```
+
+```bash
+docker compose up -d
+
+# Roxy auto-discovers both services:
+# https://web.myproject.roxy  → port 3000
+# https://api.myproject.roxy  → port 8080
+# No roxy register needed. Just works.
+```
+
+See the [Docker guide](docs/docker.md) for labels, custom
+domains, and container-to-Roxy communication.
 
 ### Mobile App Development
 
@@ -331,6 +371,7 @@ For configuration details, logging options, and file locations see the [full doc
 | Any tech stack      | ✓    | ✓            | ✓             | PHP-focused   | ✓       | ✓          |
 | WebSocket support   | ✓    | ✓            | ✓             | ~             | ✓       | ~          |
 | Wildcard subdomains | ✓    | Config-based | Manual setup  | ✗             | ✗       | ✗          |
+| Docker auto-discovery | ✓  | ✗            | Labels only   | ✗             | ✗       | ✗          |
 
 **Caddy** is the closest alternative — it has excellent HTTPS ergonomics with a built-in CA,
 `caddy trust`, and a powerful CLI (`caddy reverse-proxy --from domain --to target`). The main
@@ -393,6 +434,8 @@ Roxy is ready for daily development use on macOS and Linux. Recent additions and
   with automatic certificate generation
 - [x] **Linux support** — Ubuntu/Debian with systemd-resolved
   DNS integration and system CA trust
+- [x] **Docker auto-discovery** — Compose services get `.roxy`
+  domains automatically with label-driven customization
 - [ ] **Docker network DNS** — resolve `.roxy` domains
   inside containers without `extra_hosts`
 
@@ -404,6 +447,7 @@ Have a feature idea?
 ## Documentation & Support
 
 - 📖 **Full documentation**: [docs/README.md](docs/README.md)
+- 🐳 **Docker guide**: [docs/docker.md](docs/docker.md)
 - 🐧 **Linux guide**: [docs/linux.md](docs/linux.md)
 - 🐛 **Having issues?**: Check the [troubleshooting guide](docs/README.md#troubleshooting)
 - 💬 **Questions or feedback?**: [Open an issue](https://github.com/rbas/roxy/issues)

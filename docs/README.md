@@ -476,27 +476,24 @@ certs_dir = "/etc/roxy/certs"
 The values above are the defaults. You only need this
 section if you want different locations.
 
-## Using Roxy with Docker
+## Docker Integration
 
-Roxy runs on the host, so containers need to know how
-to reach `.roxy` domains. Add the domain as an extra host
-pointing to the host gateway in your `docker-compose.yml`:
+Roxy can automatically discover Docker Compose services and
+register them as `.roxy` domains. Enable it in `config.toml`:
 
-```yaml
-services:
-  myservice:
-    image: myimage
-    extra_hosts:
-      - "myservice.roxy:host-gateway"
+```toml
+[docker]
+enabled = true
 ```
 
-`host-gateway` resolves to the host machine's IP
-(typically `host.docker.internal` on Docker Desktop).
-The container can now reach `http://myservice.roxy` or
-`https://myservice.roxy` through Roxy on the host.
+Once enabled and the daemon is restarted, starting a compose
+stack automatically registers domains like
+`<service>.<project>.roxy` with HTTPS. No manual
+`roxy register` needed.
 
-Add one entry per `.roxy` domain the container needs
-to access.
+See [docker.md](docker.md) for the full guide: labels
+reference, container-to-Roxy communication, troubleshooting,
+and more.
 
 ## Troubleshooting
 
