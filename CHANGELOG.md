@@ -7,6 +7,31 @@ automatic HTTPS certificates. Think Laravel Valet, but written in Rust.
 All entries follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format,
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-03-30
+
+### Features
+
+- Add Docker container auto-discovery with provider registry 
+
+### Miscellaneous Tasks
+
+- Bump bollard version
+- Remove notice about early development
+
+### Other Changes
+
+- Revert "chore(release): prepare release v1.0.0"
+
+This reverts commit 699e8ad90023f2bc00c0ad486dad2bf7145d3090.
+
+### Refactoring
+
+- Introduce ports & adapters architecture with hot reload and management socket 
+
+### Styling
+
+- Fix clippy warning
+
 ## [0.5.0] - 2026-02-20
 
 ### Bug Fixes
