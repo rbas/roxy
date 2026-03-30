@@ -100,7 +100,7 @@ impl CertificateGenerator {
         let cert_pem = ca.sign_certificate(params, &key_pair)?;
 
         Ok(Certificate {
-            file_stem: pattern.cert_name(),
+            file_stem: super::cert_name(pattern),
             cert_pem,
             key_pem: key_pair.serialize_pem(),
         })
@@ -142,7 +142,7 @@ impl CertificateGenerator {
 
     /// Delete certificate files for a domain pattern
     pub fn delete(&self, pattern: &DomainPattern) -> Result<(), CertError> {
-        let stem = pattern.cert_name();
+        let stem = super::cert_name(pattern);
         let cert_path = self.certs_dir.join(format!("{}.crt", stem));
         let key_path = self.certs_dir.join(format!("{}.key", stem));
 
@@ -165,7 +165,7 @@ impl CertificateGenerator {
 
     /// Check if certificate exists for a domain pattern
     pub fn exists(&self, pattern: &DomainPattern) -> bool {
-        let stem = pattern.cert_name();
+        let stem = super::cert_name(pattern);
         let cert_path = self.certs_dir.join(format!("{}.crt", stem));
         let key_path = self.certs_dir.join(format!("{}.key", stem));
         cert_path.exists() && key_path.exists()

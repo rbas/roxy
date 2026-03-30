@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use tracing::warn;
 
 use super::StepOutcome;
 use super::ports::{CertificateManager, DaemonControl, DnsManager, DomainRepository, SystemSetup};
@@ -47,7 +48,13 @@ impl<'a> Uninstall<'a> {
 
     /// Build a preview so the CLI can show a confirmation prompt.
     pub fn preview(&self) -> Result<UninstallPreview> {
-        let domain_count = self.domains.list().unwrap_or_default().len();
+        let domain_count = match self.domains.list() {
+            Ok(domains) => domains.len(),
+            Err(e) => {
+                warn!(error = %e, "Could not read domain list for preview");
+                0
+            }
+        };
         Ok(UninstallPreview {
             domain_count,
             data_dir: self.data_dir_display.clone(),
@@ -85,7 +92,13 @@ impl<'a> Uninstall<'a> {
     }
 
     fn remove_certificates(&self, steps: &mut Vec<(String, StepOutcome)>) {
-        let domains = self.domains.list().unwrap_or_default();
+        let domains = match self.domains.list() {
+            Ok(domains) => domains,
+            Err(e) => {
+                warn!(error = %e, "Could not read domain list for certificate cleanup");
+                Vec::new()
+            }
+        };
 
         for registration in &domains {
             let label = format!("Remove cert: {}", registration.display_pattern());
@@ -155,19 +168,6 @@ impl<'a> Uninstall<'a> {
 mod tests {
     use super::*;
     use crate::application::testkit::*;
-    use crate::domain::{
-        DomainPattern, DomainRegistration, PathPrefix, ProxyTarget, Route, RouteTarget,
-    };
-
-    fn registration(name: &str) -> DomainRegistration {
-        DomainRegistration::new(
-            DomainPattern::from_name(name, false).unwrap(),
-            vec![Route::new(
-                PathPrefix::new("/").unwrap(),
-                RouteTarget::Proxy(ProxyTarget::parse("3000").unwrap()),
-            )],
-        )
-    }
 
     #[test]
     fn uninstall_stops_daemon_and_cleans_up() {

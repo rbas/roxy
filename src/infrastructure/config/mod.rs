@@ -1,9 +1,11 @@
 mod dto;
+pub mod watcher;
 
 // Re-export shared config types so existing CLI/daemon code keeps compiling.
-pub use crate::config::{DaemonConfig, RoxyPaths};
+pub use crate::config::{DaemonConfig, DockerConfig, RoxyPaths};
 
 use crate::application::ports::{ConfigLoadError, ConfigLoader, DomainRepository, RepositoryError};
+use crate::domain::value_objects::{RouteTarget, RouteTargetError};
 use crate::domain::{DomainPattern, DomainRegistration};
 use dto::RegistrationDto;
 use std::collections::HashMap;
@@ -44,6 +46,9 @@ pub struct Config {
     pub paths: RoxyPaths,
 
     #[serde(default)]
+    pub docker: DockerConfig,
+
+    #[serde(default)]
     domains: HashMap<String, RegistrationDto>,
 }
 
@@ -62,13 +67,35 @@ impl Config {
 
         for (name, dto) in &self.domains {
             let registration = DomainRegistration::from(dto.clone());
+            // Structural validation (invariants enforced at construction)
             registration
                 .validate()
                 .map_err(|e| ConfigError::InvalidDomain(name.clone(), e.to_string()))?;
+            // Infrastructure-level validation: check filesystem paths exist
+            for route in registration.routes() {
+                validate_route_path(route.target()).map_err(|e: RouteTargetError| {
+                    ConfigError::InvalidDomain(name.clone(), e.to_string())
+                })?;
+            }
         }
 
         Ok(())
     }
+}
+
+/// Validate that a static files target points to an existing directory.
+///
+/// This is an infrastructure concern (filesystem I/O), kept out of the domain layer.
+fn validate_route_path(target: &RouteTarget) -> Result<(), RouteTargetError> {
+    if let RouteTarget::StaticFiles(path) = target {
+        if !path.exists() {
+            return Err(RouteTargetError::PathNotFound(path.clone()));
+        }
+        if !path.is_dir() {
+            return Err(RouteTargetError::NotADirectory(path.clone()));
+        }
+    }
+    Ok(())
 }
 
 pub struct ConfigStore {
@@ -111,7 +138,7 @@ impl ConfigStore {
     pub fn add_domain(&self, registration: DomainRegistration) -> Result<(), ConfigError> {
         let mut config = self.load()?;
 
-        let key = registration.config_key();
+        let key = registration.display_pattern();
         if config.domains.contains_key(&key) {
             return Err(ConfigError::DomainExists(key));
         }
@@ -152,7 +179,7 @@ impl ConfigStore {
     pub fn update_domain(&self, registration: DomainRegistration) -> Result<(), ConfigError> {
         let mut config = self.load()?;
 
-        let key = registration.config_key();
+        let key = registration.display_pattern();
         if !config.domains.contains_key(&key) {
             return Err(ConfigError::DomainNotFound(key));
         }

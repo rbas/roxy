@@ -8,11 +8,13 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use crate::config::{DaemonConfig, RoxyPaths};
-use crate::domain::{DomainPattern, DomainRegistration};
+use crate::domain::{
+    DomainPattern, DomainRegistration, PathPrefix, ProxyTarget, Route, RouteTarget,
+};
 
 use super::ports::{
     CertificateError, CertificateManager, ConfigLoadError, ConfigLoader, DaemonConnection,
-    DaemonConnectionError, DaemonControl, DaemonStatus, DnsConfigError, DnsManager,
+    DaemonConnectionError, DaemonControl, DaemonRuntimeInfo, DnsConfigError, DnsManager,
     DomainRepository, NetworkInfo, RegistrationProvider, RepositoryError, SystemSetup,
 };
 
@@ -77,8 +79,13 @@ impl DomainRepository for InMemoryDomainRepository {
     }
 
     fn add(&self, registration: DomainRegistration) -> Result<(), RepositoryError> {
-        let key = registration.config_key();
-        if self.domains.borrow().iter().any(|r| r.config_key() == key) {
+        let key = registration.display_pattern();
+        if self
+            .domains
+            .borrow()
+            .iter()
+            .any(|r| r.display_pattern() == key)
+        {
             return Err(RepositoryError::DomainExists(key));
         }
         self.domains.borrow_mut().push(registration);
@@ -86,11 +93,11 @@ impl DomainRepository for InMemoryDomainRepository {
     }
 
     fn update(&self, registration: DomainRegistration) -> Result<(), RepositoryError> {
-        let key = registration.config_key();
+        let key = registration.display_pattern();
         let mut domains = self.domains.borrow_mut();
         let pos = domains
             .iter()
-            .position(|r| r.config_key() == key)
+            .position(|r| r.display_pattern() == key)
             .ok_or_else(|| RepositoryError::DomainNotFound(key))?;
         domains[pos] = registration;
         Ok(())
@@ -101,7 +108,7 @@ impl DomainRepository for InMemoryDomainRepository {
         let mut domains = self.domains.borrow_mut();
         let pos = domains
             .iter()
-            .position(|r| r.config_key() == key)
+            .position(|r| r.display_pattern() == key)
             .ok_or_else(|| RepositoryError::DomainNotFound(key))?;
         domains.remove(pos);
         Ok(())
@@ -166,7 +173,7 @@ impl CertificateManager for InMemoryCertificateManager {
                 "simulated cert failure"
             )));
         }
-        self.certs.borrow_mut().push(pattern.cert_name());
+        self.certs.borrow_mut().push(pattern.display_pattern());
         Ok(())
     }
 
@@ -178,7 +185,7 @@ impl CertificateManager for InMemoryCertificateManager {
         }
         self.certs
             .borrow_mut()
-            .retain(|c| *c != pattern.cert_name());
+            .retain(|c| *c != pattern.display_pattern());
         Ok(())
     }
 
@@ -193,7 +200,7 @@ impl CertificateManager for InMemoryCertificateManager {
     }
 
     fn exists(&self, pattern: &DomainPattern) -> bool {
-        self.certs.borrow().contains(&pattern.cert_name())
+        self.certs.borrow().contains(&pattern.display_pattern())
     }
 
     fn is_trusted(&self) -> Result<bool, CertificateError> {
@@ -409,32 +416,24 @@ impl SystemSetup for InMemorySystemSetup {
 
 pub struct InMemoryDaemonConnection {
     registrations: RefCell<Vec<DomainRegistration>>,
-    pid: u32,
-    http_port: u16,
-    https_port: u16,
-    dns_port: u16,
 }
 
 impl InMemoryDaemonConnection {
     pub fn new(registrations: Vec<DomainRegistration>) -> Self {
         Self {
             registrations: RefCell::new(registrations),
-            pid: 1234,
-            http_port: 80,
-            https_port: 443,
-            dns_port: 1053,
         }
     }
 }
 
 impl DaemonConnection for InMemoryDaemonConnection {
-    fn status(&self) -> Result<DaemonStatus, DaemonConnectionError> {
-        Ok(DaemonStatus {
-            pid: self.pid,
+    fn status(&self) -> Result<DaemonRuntimeInfo, DaemonConnectionError> {
+        Ok(DaemonRuntimeInfo {
+            pid: 1234,
             registrations: self.registrations.borrow().clone(),
-            http_port: self.http_port,
-            https_port: self.https_port,
-            dns_port: self.dns_port,
+            http_port: 80,
+            https_port: 443,
+            dns_port: 1053,
         })
     }
 
@@ -445,4 +444,48 @@ impl DaemonConnection for InMemoryDaemonConnection {
     fn list_registrations(&self) -> Result<Vec<DomainRegistration>, DaemonConnectionError> {
         Ok(self.registrations.borrow().clone())
     }
+}
+
+// ---------------------------------------------------------------------------
+// NotRunningDaemonConnection
+// ---------------------------------------------------------------------------
+
+/// A `DaemonConnection` that always returns `NotRunning`.
+/// Useful for testing fallback-to-config paths.
+pub struct NotRunningDaemonConnection;
+
+impl DaemonConnection for NotRunningDaemonConnection {
+    fn status(&self) -> Result<DaemonRuntimeInfo, DaemonConnectionError> {
+        Err(DaemonConnectionError::NotRunning)
+    }
+
+    fn reload(&self) -> Result<(), DaemonConnectionError> {
+        Err(DaemonConnectionError::NotRunning)
+    }
+
+    fn list_registrations(&self) -> Result<Vec<DomainRegistration>, DaemonConnectionError> {
+        Err(DaemonConnectionError::NotRunning)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared test helpers
+// ---------------------------------------------------------------------------
+
+/// Build an exact `DomainPattern` from a domain name string.
+pub fn exact(name: &str) -> DomainPattern {
+    DomainPattern::from_name(name, false).unwrap()
+}
+
+/// Build a proxy `Route` from a path prefix and port number.
+pub fn proxy_route(path: &str, port: u16) -> Route {
+    Route::new(
+        PathPrefix::new(path).unwrap(),
+        RouteTarget::Proxy(ProxyTarget::parse(&port.to_string()).unwrap()),
+    )
+}
+
+/// Build a simple `DomainRegistration` with one proxy route (/ -> 3000).
+pub fn registration(name: &str) -> DomainRegistration {
+    DomainRegistration::new(exact(name), vec![proxy_route("/", 3000)])
 }

@@ -1,3 +1,4 @@
+pub mod context;
 pub mod install;
 pub mod list;
 pub mod logs;

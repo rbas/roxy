@@ -182,26 +182,24 @@ impl DomainRegistration {
 Use enums to model domain concepts and behavior:
 
 ```rust
-pub enum Target {
+pub enum RouteTarget {
     StaticFiles(PathBuf),
-    ReverseProxy(Port),
+    Proxy(ProxyTarget),
 }
 
-impl Target {
+impl RouteTarget {
+    /// Domain validation — structural invariants only, no I/O.
+    /// Filesystem checks (path exists, is directory) belong in
+    /// infrastructure or application layer.
     pub fn validate(&self) -> Result<()> {
         match self {
-            Target::StaticFiles(path) => {
-                if !path.exists() {
-                    return Err(anyhow!("Path does not exist: {}", path.display()));
+            RouteTarget::StaticFiles(path) => {
+                if path.as_os_str().is_empty() {
+                    return Err(anyhow!("Static files path cannot be empty"));
                 }
                 Ok(())
             }
-            Target::ReverseProxy(port) => {
-                if port.0 < 1024 {
-                    return Err(anyhow!("Port must be >= 1024"));
-                }
-                Ok(())
-            }
+            RouteTarget::Proxy(_) => Ok(()),
         }
     }
 }
@@ -470,6 +468,133 @@ pub struct DomainRegistration {
 - ❌ Separate domain and persistence models (Rust's type system makes this less necessary)
 
 **Remember:** DDD should make code MORE clear, not more complex. If a DDD pattern adds complexity without clear benefit, skip it.
+
+#### Layer Boundary Rules (Enforced)
+
+These are concrete, non-negotiable rules for keeping layers clean as the project grows.
+
+**Rule 1: Domain layer MUST NOT do I/O or import infrastructure.**
+
+The `src/domain/` layer must only depend on `std`, `thiserror`, and `anyhow`.
+No filesystem calls (`path.exists()`, `path.is_dir()`), no network, no external
+crates like `bollard` or `serde`. Domain types validate structural invariants
+only (e.g., "routes not empty", "name matches pattern"). Filesystem or network
+validation belongs in infrastructure or application layers.
+
+```rust
+// BAD — domain does I/O
+impl DomainRegistration {
+    pub fn validate(&self) -> Result<()> {
+        if !path.exists() { /* ... */ }  // filesystem check in domain
+    }
+}
+
+// GOOD — domain checks structural invariants only
+impl DomainRegistration {
+    pub fn validate(&self) -> Result<()> {
+        if self.routes.is_empty() {
+            return Err(RegistrationError::NoRoutes);
+        }
+        Ok(())
+    }
+}
+// Infrastructure or application layer checks filesystem
+```
+
+**Rule 2: Domain enums MUST NOT name infrastructure implementations.**
+
+Domain enums model what the business cares about, not where data comes from.
+If no business rule behaves differently per source, use a generic variant.
+
+```rust
+// BAD — domain knows about Docker
+pub enum RegistrationSource {
+    Config,
+    Docker,     // infrastructure name in domain
+}
+
+// GOOD — domain only knows "config vs external"
+pub enum RegistrationSource {
+    Config,
+    External,   // could be Docker, Podman, K8s — domain doesn't care
+}
+```
+
+When adding a new infrastructure provider (Podman, Kubernetes, etc.), you should
+NOT need to modify `src/domain/`. The provider name is metadata carried by the
+infrastructure layer.
+
+**Rule 3: Domain value objects MUST NOT have infrastructure-specific constructors.**
+
+Type-driven design should encode domain distinctions, not infrastructure ones.
+If two things follow different validation rules, express that as a domain concept
+— not as an infrastructure-named constructor.
+
+```rust
+// BAD — domain knows about containers
+impl Port {
+    pub fn new(port: u16) -> Result<Self> { /* rejects < 1024 */ }
+    pub fn container(port: u16) -> Result<Self> { /* allows any */ }
+}
+
+// GOOD — domain concepts, no infrastructure names
+impl Port {
+    pub fn new(port: u16) -> Result<Self> { /* 1..=65535 */ }
+}
+// If different validation is truly needed, model the domain distinction:
+//   Port::target(port)   — connecting TO a service (any port valid)
+//   Port::listen(port)   — binding a port (may restrict range)
+```
+
+Ask: "Does any business rule behave differently here?" If yes, model the domain
+distinction with a domain name. If no, one constructor is enough.
+
+**Rule 4: Application ports MUST return domain types or application DTOs.**
+
+Port interfaces (traits in `src/application/ports/`) must never expose
+infrastructure types like `DaemonConfig`, `RoxyPaths`, raw PIDs, or
+OS-specific structures. If the application needs data from infrastructure,
+define a DTO in the application layer.
+
+```rust
+// BAD — infrastructure types in port interface
+fn load(&self) -> Result<(DaemonConfig, RoxyPaths)>;
+
+// GOOD — application-level DTO
+pub struct AppConfig { pub registrations: Vec<DomainRegistration> }
+fn load(&self) -> Result<AppConfig>;
+```
+
+**Rule 5: Domain entities should be fully constructed, not mutated by infrastructure.**
+
+If a property needs to be set (like registration source), pass it via
+the constructor. Don't add setters that let infrastructure poke values
+into domain entities after creation.
+
+```rust
+// BAD — infrastructure mutates domain entity
+let mut reg = DomainRegistration::new(pattern, routes);
+reg.set_source(RegistrationSource::Docker);  // setter for infra
+
+// GOOD — fully constructed
+let reg = DomainRegistration::with_source(
+    pattern, routes, RegistrationSource::External
+);
+```
+
+**Rule 6: The `daemon/` module is infrastructure.**
+
+`src/daemon/` contains HTTP server, proxy, TLS, DNS server — all
+infrastructure. It must not contain application-level orchestration.
+If something implements an application port (trait from
+`src/application/ports/`), it belongs in `src/application/` or
+`src/infrastructure/`, not `src/daemon/`.
+
+**Rule 7: Presentation concerns stay in CLI layer.**
+
+Step tracking, progress display, formatting — these belong in `src/cli/`.
+Application use cases return results; the CLI layer decides how to present
+them. Don't pass `Vec<(String, StepOutcome)>` through use cases.
 
 ### 6. What NOT to Do
 

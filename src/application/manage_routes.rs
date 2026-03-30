@@ -58,22 +58,7 @@ impl<'a> ManageRoutes<'a> {
 mod tests {
     use super::*;
     use crate::application::testkit::*;
-    use crate::domain::{DomainRegistration, ProxyTarget};
-
-    fn exact(name: &str) -> DomainPattern {
-        DomainPattern::from_name(name, false).unwrap()
-    }
-
-    fn proxy_route(path: &str, port: u16) -> Route {
-        Route::new(
-            PathPrefix::new(path).unwrap(),
-            RouteTarget::Proxy(ProxyTarget::parse(&port.to_string()).unwrap()),
-        )
-    }
-
-    fn registration(name: &str) -> DomainRegistration {
-        DomainRegistration::new(exact(name), vec![proxy_route("/", 3000)])
-    }
+    use crate::domain::ProxyTarget;
 
     #[test]
     fn adds_route_to_existing_domain() {
@@ -88,7 +73,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(route.path.as_str(), "/api");
+        assert_eq!(route.path().as_str(), "/api");
         // Verify persisted
         let reg = repo.get(&exact("myapp.roxy")).unwrap().unwrap();
         assert_eq!(reg.routes().len(), 2);

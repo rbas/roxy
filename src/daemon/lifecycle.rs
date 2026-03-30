@@ -5,12 +5,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use super::Server;
-use super::config_watcher::ConfigFileProvider;
-use crate::domain::DomainRegistration;
+use crate::application::provider_registry::ProviderRegistry;
 use crate::infrastructure::config::ConfigStore;
+use crate::infrastructure::config::watcher::ConfigFileProvider;
+use crate::infrastructure::docker::DockerProvider;
 use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
 use crate::infrastructure::tracing::{TracingOutput, init_tracing};
@@ -42,29 +43,66 @@ pub async fn run(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Result
     let config_store = ConfigStore::new(config_path.to_path_buf());
     let config = config_store.load()?;
 
-    // Create reload channel for hot-reloading registrations
-    let (reload_tx, reload_rx) = mpsc::channel::<Vec<DomainRegistration>>(4);
+    // Create reload channel for hot-reloading registrations (nudge-based)
+    let (reload_tx, reload_rx) = mpsc::channel::<()>(4);
 
-    // Create the registration provider (shared by config watcher and mgmt socket)
-    let provider = Arc::new(ConfigFileProvider::new(config_path.to_path_buf()));
+    // Create the config file provider
+    let config_provider = Arc::new(ConfigFileProvider::new(config_path.to_path_buf()));
 
-    let server = Server::new(
-        &config,
-        paths,
-        reload_rx,
-        reload_tx.clone(),
-        provider.clone(),
-    )?;
+    // Build the provider registry (aggregates all registration sources)
+    let mut registry = ProviderRegistry::new();
+    registry.add(config_provider.clone());
+
+    // Optionally enable Docker auto-discovery
+    let docker_provider = if config.docker.enabled {
+        match bollard::Docker::connect_with_local_defaults() {
+            Ok(docker) => {
+                info!("Docker integration enabled");
+                let provider = Arc::new(DockerProvider::new(docker));
+                registry.add(provider.clone());
+                Some(provider)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Docker integration enabled but could not connect to Docker socket. \
+                     Continuing without Docker support."
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let registry = Arc::new(registry);
+
+    let server = Server::new(&config, paths, reload_rx, reload_tx.clone(), registry)?;
     let cancel = CancellationToken::new();
 
     // Spawn config file watcher for hot-reload
     let cancel_watcher = cancel.clone();
-    tokio::spawn({
-        let reload_tx = reload_tx;
-        async move {
-            provider.watch(reload_tx, cancel_watcher).await;
-        }
+    let config_reload_tx = reload_tx.clone();
+    tokio::spawn(async move {
+        config_provider
+            .watch(config_reload_tx, cancel_watcher)
+            .await;
     });
+
+    // Spawn Docker watcher if enabled
+    if let Some(provider) = docker_provider {
+        let cancel_docker = cancel.clone();
+        let docker_reload_tx = reload_tx;
+        tokio::spawn(async move {
+            crate::infrastructure::docker::watcher::watch(
+                provider.docker().clone(),
+                provider.state(),
+                docker_reload_tx,
+                cancel_docker,
+            )
+            .await;
+        });
+    }
 
     // Spawn signal handler for graceful shutdown
     let cancel_signal = cancel.clone();
@@ -88,11 +126,17 @@ async fn wait_for_shutdown_signal() {
 
     #[cfg(unix)]
     {
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to register SIGTERM handler");
-        tokio::select! {
-            _ = ctrl_c => {},
-            _ = sigterm.recv() => {},
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    _ = ctrl_c => {},
+                    _ = sigterm.recv() => {},
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to register SIGTERM handler, using Ctrl+C only");
+                ctrl_c.await.ok();
+            }
         }
     }
 

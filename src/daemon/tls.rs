@@ -102,7 +102,7 @@ pub fn create_tls_acceptor(
     let generator = CertificateGenerator::new(data_dir.to_path_buf(), certs_dir.to_path_buf());
 
     for pattern in patterns {
-        let stem = pattern.cert_name();
+        let stem = crate::infrastructure::certs::cert_name(pattern);
         let cert_path = certs_dir.join(format!("{}.crt", stem));
         let key_path = certs_dir.join(format!("{}.key", stem));
 

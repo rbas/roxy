@@ -11,6 +11,7 @@ mod daemon;
 mod domain;
 mod infrastructure;
 
+use cli::context::AppContext;
 use infrastructure::config::{Config, ConfigStore};
 use infrastructure::paths::RoxyPaths;
 
@@ -180,53 +181,55 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let config_path = &cli.config;
 
+    // Handle completions before loading config (works even with malformed config)
+    if let Commands::Completions { shell } = &cli.command {
+        clap_complete::generate(*shell, &mut Cli::command(), "roxy", &mut std::io::stdout());
+        return Ok(());
+    }
+
     let (config, paths) = load_config_and_paths(config_path)?;
+    let ctx = AppContext::new(config_path, &paths);
 
     match cli.command {
-        Commands::Install => cli::install::execute(config_path, &paths, &config),
-        Commands::Uninstall { force } => cli::uninstall::execute(force, config_path, &paths),
+        Commands::Install => cli::install::execute(&ctx, &paths, &config),
+        Commands::Uninstall { force } => cli::uninstall::execute(force, &ctx, &paths),
         Commands::Register {
             domain,
             wildcard,
             route,
-        } => cli::register::execute(domain, wildcard, route, config_path, &paths),
+        } => cli::register::execute(domain, wildcard, route, &ctx),
         Commands::Unregister {
             domain,
             wildcard,
             force,
-        } => cli::unregister::execute(domain, wildcard, force, config_path, &paths),
+        } => cli::unregister::execute(domain, wildcard, force, &ctx),
         Commands::Route { command } => match command {
             RouteCommands::Add {
                 wildcard,
                 domain,
                 path,
                 target,
-            } => cli::route::add(domain, wildcard, path, target, config_path),
+            } => cli::route::add(domain, wildcard, path, target, &ctx),
             RouteCommands::Remove {
                 wildcard,
                 domain,
                 path,
-            } => cli::route::remove(domain, wildcard, path, config_path),
-            RouteCommands::List { wildcard, domain } => {
-                cli::route::list(domain, wildcard, config_path)
-            }
+            } => cli::route::remove(domain, wildcard, path, &ctx),
+            RouteCommands::List { wildcard, domain } => cli::route::list(domain, wildcard, &ctx),
         },
-        Commands::List => cli::list::execute(config_path, &paths),
+        Commands::List => cli::list::execute(&ctx),
         Commands::Start { foreground } => {
             cli::start::execute(foreground, cli.verbose, config_path, &paths, &config.daemon)
         }
-        Commands::Stop => cli::stop::execute(&paths),
-        Commands::Restart => cli::restart::execute(cli.verbose, config_path, &paths),
-        Commands::Status => cli::status::execute(config_path, &paths),
+        Commands::Stop => cli::stop::execute(&ctx),
+        Commands::Restart => cli::restart::execute(cli.verbose, config_path, &ctx),
+        Commands::Status => cli::status::execute(&ctx, &config.daemon),
         Commands::Logs {
             lines,
             clear,
             follow,
         } => cli::logs::execute(lines, clear, follow, &paths),
-        Commands::Reload => cli::reload::execute(cli.verbose, config_path, &paths),
-        Commands::Completions { shell } => {
-            clap_complete::generate(shell, &mut Cli::command(), "roxy", &mut std::io::stdout());
-            Ok(())
-        }
+        Commands::Reload => cli::reload::execute(cli.verbose, config_path, &ctx),
+        Commands::Completions { .. } => unreachable!(),
     }
 }

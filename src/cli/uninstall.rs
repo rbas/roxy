@@ -1,27 +1,20 @@
-use std::path::Path;
-
 use anyhow::Result;
 
+use super::context::AppContext;
 use crate::application::StepOutcome;
 use crate::application::uninstall::Uninstall;
-use crate::infrastructure::certs::CertificateService;
-use crate::infrastructure::config::ConfigStore;
 use crate::infrastructure::dns::get_dns_service;
 use crate::infrastructure::filesystem::FileSystemSetup;
 use crate::infrastructure::paths::RoxyPaths;
-use crate::infrastructure::pid::PidFile;
 
-pub fn execute(force: bool, config_path: &Path, paths: &RoxyPaths) -> Result<()> {
-    let config_store = ConfigStore::new(config_path.to_path_buf());
-    let cert_service = CertificateService::new(paths);
-    let pid_file = PidFile::new(paths.pid_file.clone());
+pub fn execute(force: bool, ctx: &AppContext, paths: &RoxyPaths) -> Result<()> {
     let dns_service = get_dns_service()?;
     let system = FileSystemSetup::new(paths);
 
     let use_case = Uninstall::new(
-        &config_store,
-        &cert_service,
-        &pid_file,
+        &ctx.config_store,
+        &ctx.cert_service,
+        &ctx.pid_file,
         &dns_service,
         &system,
         paths.data_dir.display().to_string(),
