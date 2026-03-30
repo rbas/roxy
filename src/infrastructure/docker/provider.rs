@@ -52,17 +52,21 @@ impl RegistrationProvider for DockerProvider {
 mod tests {
     use super::*;
 
+    /// Create a Docker client that doesn't require a running Docker daemon.
+    /// These tests only exercise in-memory state; no Docker API calls are made.
+    fn test_docker() -> Docker {
+        Docker::connect_with_http("http://localhost:1", 1, bollard::API_DEFAULT_VERSION).unwrap()
+    }
+
     #[test]
     fn provider_name() {
-        let docker = Docker::connect_with_local_defaults().unwrap();
-        let provider = DockerProvider::new(docker);
+        let provider = DockerProvider::new(test_docker());
         assert_eq!(provider.name(), "docker");
     }
 
     #[test]
     fn load_returns_empty_initially() {
-        let docker = Docker::connect_with_local_defaults().unwrap();
-        let provider = DockerProvider::new(docker);
+        let provider = DockerProvider::new(test_docker());
         let result = provider.load().unwrap();
         assert!(result.is_empty());
     }
@@ -71,8 +75,7 @@ mod tests {
     fn load_returns_state_after_update() {
         use crate::domain::{DomainName, DomainPattern, Route};
 
-        let docker = Docker::connect_with_local_defaults().unwrap();
-        let provider = DockerProvider::new(docker);
+        let provider = DockerProvider::new(test_docker());
 
         // Simulate watcher updating state
         {
