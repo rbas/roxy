@@ -3,9 +3,9 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use bollard::Docker;
-use bollard::query_parameters::ListContainersOptions;
 use bollard::models::EventMessageTypeEnum;
 use bollard::query_parameters::EventsOptions;
+use bollard::query_parameters::ListContainersOptions;
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -182,7 +182,7 @@ async fn reconcile(
             .config
             .as_ref()
             .and_then(|c| c.exposed_ports.as_ref())
-            .map(network::get_exposed_ports)
+            .map(|ports| network::get_exposed_ports(ports))
             .unwrap_or_default();
 
         let host_port_mappings = network::get_host_port_mappings(

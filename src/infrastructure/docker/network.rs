@@ -45,7 +45,7 @@ pub fn get_host_port_mappings(
 ///
 /// Extracts port numbers from the image's ExposedPorts config
 /// (e.g., {"3000/tcp": {}} -> [3000]).
-pub fn get_exposed_ports(exposed_ports: &Vec<String>) -> Vec<u16> {
+pub fn get_exposed_ports(exposed_ports: &[String]) -> Vec<u16> {
     exposed_ports
         .iter()
         .filter_map(|key| {
