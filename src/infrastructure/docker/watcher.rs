@@ -3,9 +3,9 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use bollard::Docker;
-use bollard::container::ListContainersOptions;
+use bollard::query_parameters::ListContainersOptions;
 use bollard::models::EventMessageTypeEnum;
-use bollard::system::EventsOptions;
+use bollard::query_parameters::EventsOptions;
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -69,11 +69,19 @@ async fn watch_events(
     cancel: &CancellationToken,
 ) -> anyhow::Result<()> {
     let mut filters = HashMap::new();
-    filters.insert("type", vec!["container"]);
-    filters.insert("event", vec!["start", "stop", "die", "destroy"]);
+    filters.insert("type".to_string(), vec!["container".to_string()]);
+    filters.insert(
+        "event".to_string(),
+        vec![
+            "start".to_string(),
+            "stop".to_string(),
+            "die".to_string(),
+            "destroy".to_string(),
+        ],
+    );
 
     let options = EventsOptions {
-        filters,
+        filters: Some(filters),
         ..Default::default()
     };
 
@@ -134,7 +142,7 @@ async fn reconcile(
     nudge_tx: &mpsc::Sender<()>,
 ) -> anyhow::Result<()> {
     let containers = docker
-        .list_containers(Some(ListContainersOptions::<&str> {
+        .list_containers(Some(ListContainersOptions {
             all: false, // only running
             ..Default::default()
         }))

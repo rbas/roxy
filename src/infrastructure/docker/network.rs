@@ -45,9 +45,9 @@ pub fn get_host_port_mappings(
 ///
 /// Extracts port numbers from the image's ExposedPorts config
 /// (e.g., {"3000/tcp": {}} -> [3000]).
-pub fn get_exposed_ports(exposed_ports: &HashMap<String, HashMap<(), ()>>) -> Vec<u16> {
+pub fn get_exposed_ports(exposed_ports: &Vec<String>) -> Vec<u16> {
     exposed_ports
-        .keys()
+        .iter()
         .filter_map(|key| {
             // Format is "port/proto" e.g., "3000/tcp"
             let port_str = key.split('/').next()?;
@@ -62,9 +62,7 @@ mod tests {
 
     #[test]
     fn parse_exposed_ports() {
-        let mut ports = HashMap::new();
-        ports.insert("3000/tcp".to_string(), HashMap::new());
-        ports.insert("8080/tcp".to_string(), HashMap::new());
+        let ports = vec!["3000/tcp".to_string(), "8080/tcp".to_string()];
 
         let mut result = get_exposed_ports(&ports);
         result.sort();
@@ -73,15 +71,14 @@ mod tests {
 
     #[test]
     fn parse_exposed_ports_empty() {
-        let ports = HashMap::new();
+        let ports = vec![];
         let result = get_exposed_ports(&ports);
         assert!(result.is_empty());
     }
 
     #[test]
     fn parse_exposed_ports_udp() {
-        let mut ports = HashMap::new();
-        ports.insert("53/udp".to_string(), HashMap::new());
+        let ports = vec!["53/udp".to_string()];
 
         let result = get_exposed_ports(&ports);
         assert_eq!(result, vec![53]);
