@@ -19,9 +19,6 @@ use infrastructure::paths::RoxyPaths;
 #[command(name = "roxy")]
 #[command(about = "Local development proxy with custom .roxy domains and HTTPS")]
 #[command(version)]
-#[command(
-    after_help = concat!("Heads up: Roxy is still finding her feet (v", env!("CARGO_PKG_VERSION"), ").\nThings may shift around. If something bites, let me know!\nhttps://github.com/rbas/roxy/issues")
-)]
 struct Cli {
     /// Path to the config file
     #[arg(short, long, global = true, default_value = "/etc/roxy/config.toml")]

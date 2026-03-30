@@ -14,10 +14,6 @@ HTTPS for every local project.
 - ✓ Share work across devices
 - ✓ No nginx. No dnsmasq. No YAML.
 
-> ⚠️ **Early Development**: Roxy is ready for daily use on macOS and Linux,
-> but things may shift around.
-> [Report issues here](https://github.com/rbas/roxy/issues).
-
 ---
 
 ## Why Roxy?

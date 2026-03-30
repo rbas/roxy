@@ -58,12 +58,6 @@ pub fn execute(
     }
     println!("\nUse 'roxy status' to check status");
     println!("Use 'roxy stop' to stop the daemon");
-    println!(
-        "\nHeads up: Roxy is still finding her feet (v{}).",
-        env!("CARGO_PKG_VERSION")
-    );
-    println!("Things may shift around. If something bites, let me know!");
-    println!("https://github.com/rbas/roxy/issues");
 
     Ok(())
 }
