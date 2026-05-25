@@ -62,7 +62,7 @@ simple-dns = "0.11"
 base64 = "0.22.1"
 
 # Docker
-bollard = "0.20"
+bollard = "0.21"
 futures-util = "0.3"
 
 [profile.release]
