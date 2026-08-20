@@ -7,6 +7,24 @@ automatic HTTPS certificates. Think Laravel Valet, but written in Rust.
 All entries follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format,
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-20
+
+### Changes
+
+- Update README with GitHub Sponsors badge [skip ci]
+
+Added GitHub Sponsors badge to README.
+
+### Features
+
+- Add GitHub sponsor username to FUNDING.yml
+
+Updated GitHub funding configuration to include a sponsor.
+
+### Refactoring
+
+- Run roxy daemon without root 
+
 ## [1.0.0] - 2026-03-30
 
 ### Features
