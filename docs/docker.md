@@ -7,7 +7,9 @@ compose stack instantly makes services available at
 
 ## Enabling Docker Integration
 
-Add the `[docker]` section to `/etc/roxy/config.toml`:
+Add the `[docker]` section to your Roxy user configuration
+(`~/Library/Application Support/Roxy/config.toml` on macOS or
+`$HOME/.config/roxy/config.toml` on Linux):
 
 ```toml
 [docker]
@@ -17,7 +19,7 @@ enabled = true
 Then restart the daemon:
 
 ```bash
-sudo roxy restart
+roxy restart
 ```
 
 Roxy connects to the Docker socket and watches for container
@@ -235,8 +237,8 @@ they are managed entirely by the Docker watcher.
 View discovery logs:
 
 ```bash
-# See container add/remove events
-ROXY_LOG=debug sudo roxy start --foreground
+# After setting daemon.log_level = "debug" in the Roxy config
+roxy restart
 
 # Or check the log file
 roxy logs -f
@@ -261,10 +263,12 @@ Check that:
 3. The container is not opted out (`roxy.enable=false`)
 4. The daemon is running (`roxy status`)
 
-Run with debug logging to see why a container was skipped:
+Set `daemon.log_level = "debug"` in the Roxy config, restart,
+and follow the log to see why a container was skipped:
 
 ```bash
-ROXY_LOG=debug sudo roxy start --foreground
+roxy restart
+roxy logs -f
 ```
 
 Look for `Docker container skipped` messages with a reason.
@@ -297,6 +301,8 @@ labels:
 ### Docker Socket Permission
 
 Roxy connects to the Docker socket
-(`/var/run/docker.sock` by default). If running as root
-(via `sudo`), this works automatically. If you see connection
-errors, verify the socket exists and is accessible.
+(`/var/run/docker.sock` by default) as your developer account.
+If you see connection errors, verify the socket exists and that
+your account can access it. On Linux this commonly means adding
+the account to the `docker` group (then logging in again) or
+using a rootless Docker socket.

@@ -20,6 +20,7 @@ use super::router::{RuntimeState, SharedState, create_router};
 use super::tls::create_tls_acceptor;
 use crate::application::ports::RegistrationProvider;
 use crate::infrastructure::config::Config;
+use crate::infrastructure::listeners::ActivatedListeners;
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::paths::RoxyPaths;
 
@@ -44,6 +45,7 @@ pub struct Server {
     https_port: u16,
     dns_port: u16,
     lan_ip: Ipv4Addr,
+    listeners: ActivatedListeners,
 }
 
 impl Server {
@@ -59,19 +61,13 @@ impl Server {
 
         let registrations = config.registrations();
 
-        // Collect patterns for domains with HTTPS enabled
-        let https_patterns: Vec<_> = registrations
-            .iter()
-            .filter(|d| d.is_https_enabled())
-            .map(|d| d.pattern().clone())
-            .collect();
-
         let state: SharedState = Arc::new(ArcSwap::from_pointee(RuntimeState::new(registrations)));
 
-        let tls_acceptor = create_tls_acceptor(&https_patterns, &paths.certs_dir, &paths.data_dir)?;
+        let tls_acceptor = create_tls_acceptor(&paths.data_dir)?;
 
         // Get LAN IP for DNS responses (DNS server handles source-based resolution)
         let lan_ip = get_lan_ip();
+        let listeners = ActivatedListeners::acquire()?;
 
         Ok(Self {
             state,
@@ -84,10 +80,11 @@ impl Server {
             https_port: config.daemon.https_port,
             dns_port: config.daemon.dns_port,
             lan_ip,
+            listeners,
         })
     }
 
-    pub async fn run(self, cancel: CancellationToken) -> Result<()> {
+    pub async fn run(mut self, cancel: CancellationToken) -> Result<()> {
         info!(
             http = self.http_port,
             https = self.https_port,
@@ -113,8 +110,13 @@ impl Server {
             cancel.clone(),
         );
 
-        let http_server =
-            start_http_server(self.state.clone(), self.http_port, cancel.clone()).await?;
+        let http_server = start_http_server(
+            self.state.clone(),
+            self.http_port,
+            self.listeners.http.take(),
+            cancel.clone(),
+        )
+        .await?;
 
         await_servers(
             http_server,
@@ -122,6 +124,7 @@ impl Server {
             self.state,
             self.tls_acceptor,
             self.https_port,
+            self.listeners.https.take(),
             cancel,
         )
         .await
@@ -194,6 +197,7 @@ fn spawn_mgmt_socket(
 async fn start_http_server(
     state: SharedState,
     http_port: u16,
+    activated: Option<std::net::TcpListener>,
     cancel: CancellationToken,
 ) -> Result<tokio::task::JoinHandle<Result<()>>> {
     let http_addr = SocketAddr::from(([0, 0, 0, 0], http_port));
@@ -201,10 +205,15 @@ async fn start_http_server(
         .layer(Extension(Scheme::Http))
         .layer(axum::middleware::from_fn(inject_client_addr));
 
-    let http_listener = TcpListener::bind(http_addr).await.context(format!(
-        "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
-        http_port, http_port
-    ))?;
+    let http_listener = match activated {
+        Some(listener) => {
+            TcpListener::from_std(listener).context("Failed to adopt activated HTTP listener")?
+        }
+        None => TcpListener::bind(http_addr).await.context(format!(
+            "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
+            http_port, http_port
+        ))?,
+    };
 
     info!(addr = %http_addr, "HTTP server listening");
 
@@ -223,14 +232,20 @@ async fn start_https_server(
     state: SharedState,
     tls_acceptor: TlsAcceptor,
     https_port: u16,
+    activated: Option<std::net::TcpListener>,
     cancel: CancellationToken,
 ) -> Result<tokio::task::JoinHandle<()>> {
     let https_addr = SocketAddr::from(([0, 0, 0, 0], https_port));
     let https_router = create_router(state).layer(Extension(Scheme::Https));
-    let https_listener = TcpListener::bind(https_addr).await.context(format!(
-        "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
-        https_port, https_port
-    ))?;
+    let https_listener = match activated {
+        Some(listener) => {
+            TcpListener::from_std(listener).context("Failed to adopt activated HTTPS listener")?
+        }
+        None => TcpListener::bind(https_addr).await.context(format!(
+            "Failed to bind to port {}. Is another service using it? Try: sudo lsof -i :{}",
+            https_port, https_port
+        ))?,
+    };
 
     info!(addr = %https_addr, "HTTPS server listening");
 
@@ -281,11 +296,18 @@ async fn await_servers(
     state: SharedState,
     tls_acceptor: Option<TlsAcceptor>,
     https_port: u16,
+    https_listener: Option<std::net::TcpListener>,
     cancel: CancellationToken,
 ) -> Result<()> {
     if let Some(tls_acceptor) = tls_acceptor {
-        let https_server =
-            start_https_server(state, tls_acceptor, https_port, cancel.clone()).await?;
+        let https_server = start_https_server(
+            state,
+            tls_acceptor,
+            https_port,
+            https_listener,
+            cancel.clone(),
+        )
+        .await?;
 
         tokio::select! {
             r = http_server => r??,
@@ -304,8 +326,8 @@ async fn await_servers(
         }
     } else {
         warn!(
-            "No HTTPS certificates found, running HTTP only. \
-             Register a domain with sudo to enable HTTPS."
+            "Roxy Root CA not found, running HTTP only. \
+             Run 'sudo roxy install' to enable HTTPS."
         );
         tokio::select! {
             r = http_server => r??,

@@ -81,7 +81,7 @@ sudo apt install libnss3-tools
 
 ```bash
 certutil -A -n "Roxy Local Development CA" -t "CT,C,C" \
-  -i /etc/roxy/ca.crt \
+  -i "$HOME/.local/share/roxy/ca.crt" \
   -d sql:$(find ~/snap/firefox/common/.mozilla/firefox \
     -name '*.default*' -type d | head -1)/
 ```
@@ -90,7 +90,7 @@ certutil -A -n "Roxy Local Development CA" -t "CT,C,C" \
 
 ```bash
 certutil -A -n "Roxy Local Development CA" -t "CT,C,C" \
-  -i /etc/roxy/ca.crt \
+  -i "$HOME/.local/share/roxy/ca.crt" \
   -d sql:$(find ~/snap/chromium -name 'nssdb' \
     -type d | head -1)/
 ```
@@ -175,33 +175,36 @@ sudo ss -tlnp | grep ':1053\b'
 
 Common culprits: Apache (`apache2`), nginx, or another
 Roxy instance. Stop the conflicting service or change
-Roxy's ports in `/etc/roxy/config.toml`.
+Roxy's ports in
+`$HOME/.config/roxy/config.toml`, then
+rerun `sudo roxy install` to update the socket units.
 
-### Auto-Start with systemd
+### Service and Socket Activation
 
-Create a service file to start Roxy at boot:
+`sudo roxy install` creates and enables these system units:
 
-```bash
-sudo tee /etc/systemd/system/roxy.service > /dev/null <<'EOF'
-[Unit]
-Description=Roxy local development proxy
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/roxy start --foreground
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now roxy
+```text
+roxy-http.socket
+roxy-https.socket
+roxy.service
 ```
 
-Check status:
+The socket units own ports 80 and 443 and pass their file
+descriptors to `roxy.service`. The service has `User=` set to
+the developer who ran the installer, so configuration, logs,
+Docker access, and the daemon process do not use root.
+
+Use Roxy for normal lifecycle management:
+
+```bash
+roxy status
+roxy stop
+roxy start
+```
+
+For system-level diagnostics, inspect the generated units:
 
 ```bash
 sudo systemctl status roxy
+sudo systemctl status roxy-http.socket roxy-https.socket
 ```

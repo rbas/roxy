@@ -3,6 +3,9 @@ name = "roxy"
 version = "1.0.2"
 edition = "2024"
 
+[build]
+rustc-wrapper = "sccache"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
@@ -52,6 +55,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 
 # Utilities
 humantime = "2.1"
+libc = "0.2"
 
 # Tracing
 tracing = "0.1"

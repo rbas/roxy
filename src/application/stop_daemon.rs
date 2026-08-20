@@ -20,7 +20,7 @@ impl<'a> StopDaemon<'a> {
             bail!("Roxy daemon is not running.");
         }
 
-        self.daemon.stop_gracefully(Duration::from_millis(500))?;
+        self.daemon.stop_gracefully(Duration::from_secs(2))?;
         Ok(())
     }
 }

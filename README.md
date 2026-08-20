@@ -40,16 +40,13 @@ HTTPS for every local project.
 brew tap rbas/roxy
 brew install roxy
 
-# 2. One-time setup (creates Root CA, configures DNS)
+# 2. One-time setup (CA, DNS, and unprivileged system service)
 sudo roxy install
 
 # 3. Register your first project
 roxy register myapp.roxy --route "/=3000" --route "/api=3001"
 
-# 4. Start the proxy
-sudo roxy start
-
-# 5. Open in browser
+# 4. Open in browser (the proxy is already running)
 open https://myapp.roxy      # on macOS
 xdg-open https://myapp.roxy  # on linux
 ```
@@ -242,10 +239,12 @@ INFO WebSocket connection closed target=127.0.0.1:3000 duration_ms=45230
 INFO DNS query domain=myapp.roxy qtype=A response=127.0.0.1
 ```
 
-**Need debugging details?** Turn on verbose mode:
+**Need debugging details?** Set `daemon.log_level = "debug"` in
+your user configuration, restart Roxy, then follow the log:
 
 ```bash
-sudo roxy start --verbose
+roxy restart
+roxy logs -f
 ```
 
 ```text
@@ -287,11 +286,11 @@ roxy unregister myapp.roxy
 # List all registered domains
 roxy list
 
-# Daemon control
-sudo roxy start              # Start in background
-sudo roxy start --foreground # Start in foreground
-sudo roxy stop
-sudo roxy restart
+# Daemon control (no sudo after installation)
+roxy start
+roxy stop
+roxy restart
+roxy reload
 roxy status
 
 # View logs
@@ -302,23 +301,10 @@ roxy logs -n 100      # Last 100 lines
 
 ## Auto-Start on Boot
 
-If you installed Roxy via Homebrew, you can use `brew services` to start Roxy
-automatically at boot:
-
-```bash
-# Start roxy now and auto-start at boot
-sudo brew services start roxy
-```
-
-Roxy stores its configuration in `/etc/roxy/config.toml`, so it works
-automatically when started by launchd at boot — no extra environment
-variables needed.
-
-To stop auto-start:
-
-```bash
-sudo brew services stop roxy
-```
+`sudo roxy install` installs a launchd service on macOS or systemd socket and
+service units on Linux. The operating system owns ports 80 and 443 and passes
+the listeners to Roxy, while the Roxy process itself runs as the developer who
+performed the installation. No separate `brew services` setup is needed.
 
 ## How It Works
 
@@ -328,16 +314,16 @@ sudo brew services stop roxy
    - Creates a trusted Root Certificate Authority (CA)
    - Adds it to your system trust store (macOS Keychain / Linux ca-certificates)
    - Configures DNS to resolve `.roxy` domains (macOS `/etc/resolver/` / Linux systemd-resolved)
+   - Installs socket activation for ports 80/443 and starts Roxy as your user
    - **⚠️ Restart your browser** after first install for certificates to be recognized
 
 2. **`roxy register <domain>`**
-   - Generates an SSL certificate signed by your Root CA
    - Saves your routing configuration (which paths go to which ports/directories)
+   - Reloads the running daemon immediately, without `sudo` or a restart
 
-3. **`roxy start`**
-   - Starts HTTP (`:80`) and HTTPS (`:443`) servers
-   - Starts the DNS server (`:53`) for `.roxy` domains
-   - Routes incoming requests to your local services based on path
+3. **First HTTPS request**
+   - Generates an exact, in-memory certificate from TLS SNI
+   - Reuses it from an in-memory cache; no per-domain key files are written
 
 **Your browser trusts the certificates** (no warnings) because they're
 signed by your Root CA. WebSockets work transparently. DNS queries for
@@ -345,11 +331,12 @@ signed by your Root CA. WebSockets work transparently. DNS queries for
 
 **Clean and contained:**
 
-- Config, certs, and CA: `/etc/roxy/`
-- Logs: `/var/log/roxy/`
-- PID file: `/var/run/roxy.pid`
+- macOS data/config: `~/Library/Application Support/Roxy/`
+- macOS logs/runtime: `~/Library/Logs/Roxy/` and `~/Library/Caches/Roxy/`
+- Linux config/data: `~/.config/roxy/` and `~/.local/share/roxy/`
+- Linux logs/runtime: `~/.local/state/roxy/`
 - DNS: `/etc/resolver/roxy` (macOS) or `/etc/systemd/resolved.conf.d/roxy.conf` (Linux)
-- Run `roxy uninstall` to remove everything cleanly
+- Run `sudo roxy uninstall` to remove the active installation cleanly
 
 For configuration details, logging options, and file locations see the [full documentation](docs/README.md).
 
@@ -384,7 +371,7 @@ No `/etc/hosts`, no config files, no manual cert setup.
 
 - **macOS** (Monterey or later) or **Linux** (Ubuntu 22.04+ / Debian 12+)
 - **Rust** toolchain (for building from source)
-- **sudo** access (needed for ports 80/443 and DNS configuration)
+- **sudo** access for the one-time install/uninstall only
 - **Linux only:** `systemd-resolved` (default on Ubuntu)
 
 ### Install via Homebrew
@@ -423,7 +410,7 @@ Roxy is ready for daily development use on macOS and Linux. Recent additions and
 - [x] **Pre-built binaries** — download and run without building from source
   (macOS ARM64)
 - [x] **Homebrew support** — `brew tap rbas/roxy && brew install roxy`
-- [x] **Auto-start on boot** — launch daemon via launchd with `brew services`
+- [x] **Auto-start on boot** — unprivileged launchd/systemd service with socket activation
 - [x] **File browser** — automatic directory listing
   for static file routes
 - [x] **Wildcard subdomains** — `*.myapp.roxy` patterns

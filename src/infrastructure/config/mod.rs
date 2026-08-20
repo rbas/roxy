@@ -131,7 +131,9 @@ impl ConfigStore {
         self.ensure_config_dir()?;
 
         let content = toml::to_string_pretty(config)?;
-        fs::write(&self.path, content)?;
+        let temporary = self.path.with_extension("toml.tmp");
+        fs::write(&temporary, content)?;
+        fs::rename(temporary, &self.path)?;
         Ok(())
     }
 

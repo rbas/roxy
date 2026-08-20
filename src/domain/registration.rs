@@ -46,7 +46,7 @@ impl DomainRegistration {
         Self {
             pattern,
             routes,
-            https_enabled: false,
+            https_enabled: true,
             source: RegistrationSource::Config,
         }
     }
@@ -60,7 +60,7 @@ impl DomainRegistration {
         Self {
             pattern,
             routes,
-            https_enabled: false,
+            https_enabled: true,
             source,
         }
     }
@@ -168,9 +168,9 @@ mod tests {
     // --- Constructor ---
 
     #[test]
-    fn new_creates_registration_with_https_disabled() {
+    fn new_creates_https_registration() {
         let reg = DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
-        assert!(!reg.is_https_enabled());
+        assert!(reg.is_https_enabled());
         assert_eq!(reg.routes().len(), 1);
         assert_eq!(reg.domain().as_str(), "myapp.roxy");
     }
@@ -191,7 +191,7 @@ mod tests {
     fn enable_https_sets_flag() {
         let mut reg =
             DomainRegistration::new(make_pattern("myapp.roxy"), vec![proxy_route("/", 3000)]);
-        assert!(!reg.is_https_enabled());
+        assert!(reg.is_https_enabled());
         reg.enable_https();
         assert!(reg.is_https_enabled());
     }

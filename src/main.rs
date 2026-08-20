@@ -21,8 +21,8 @@ use infrastructure::paths::RoxyPaths;
 #[command(version)]
 struct Cli {
     /// Path to the config file
-    #[arg(short, long, global = true, default_value = "/etc/roxy/config.toml")]
-    config: PathBuf,
+    #[arg(short, long, global = true)]
+    config: Option<PathBuf>,
 
     /// Enable verbose output
     #[arg(short, long, global = true)]
@@ -169,14 +169,35 @@ enum RouteCommands {
 /// For `install`, the config file may not exist yet, so defaults are fine.
 fn load_config_and_paths(config_path: &Path) -> Result<(Config, RoxyPaths)> {
     let config_store = ConfigStore::new(config_path.to_path_buf());
-    let config = config_store.load()?;
+    let imported_legacy = !config_store.config_exists()
+        && config_path == crate::config::default_config_path()
+        && Path::new("/etc/roxy/config.toml").exists();
+    let mut config = if imported_legacy {
+        let legacy = ConfigStore::new(PathBuf::from("/etc/roxy/config.toml"));
+        let mut imported = legacy.load()?;
+        imported.paths = RoxyPaths::default();
+        config_store.save(&imported)?;
+        imported
+    } else {
+        config_store.load()?
+    };
+
+    // Normalize configs imported by earlier previews of the user-owned layout.
+    if config_path == crate::config::default_config_path()
+        && config.paths.data_dir == Path::new("/etc/roxy")
+    {
+        config.paths = RoxyPaths::default();
+        config_store.save(&config)?;
+    }
     let paths = config.paths.clone();
     Ok((config, paths))
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let config_path = &cli.config;
+    let config_path = cli
+        .config
+        .unwrap_or_else(crate::config::default_config_path);
 
     // Handle completions before loading config (works even with malformed config)
     if let Commands::Completions { shell } = &cli.command {
@@ -184,11 +205,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let (config, paths) = load_config_and_paths(config_path)?;
-    let ctx = AppContext::new(config_path, &paths);
+    let (config, paths) = load_config_and_paths(&config_path)?;
+    let ctx = AppContext::new(&config_path, &paths);
 
     match cli.command {
-        Commands::Install => cli::install::execute(&ctx, &paths, &config),
+        Commands::Install => cli::install::execute(&ctx, &config_path, &paths, &config),
         Commands::Uninstall { force } => cli::uninstall::execute(force, &ctx, &paths),
         Commands::Register {
             domain,
@@ -215,18 +236,22 @@ fn main() -> Result<()> {
             RouteCommands::List { wildcard, domain } => cli::route::list(domain, wildcard, &ctx),
         },
         Commands::List => cli::list::execute(&ctx),
-        Commands::Start { foreground } => {
-            cli::start::execute(foreground, cli.verbose, config_path, &paths, &config.daemon)
-        }
+        Commands::Start { foreground } => cli::start::execute(
+            foreground,
+            cli.verbose,
+            &config_path,
+            &paths,
+            &config.daemon,
+        ),
         Commands::Stop => cli::stop::execute(&ctx),
-        Commands::Restart => cli::restart::execute(cli.verbose, config_path, &ctx),
+        Commands::Restart => cli::restart::execute(cli.verbose, &config_path, &ctx),
         Commands::Status => cli::status::execute(&ctx, &config.daemon),
         Commands::Logs {
             lines,
             clear,
             follow,
         } => cli::logs::execute(lines, clear, follow, &paths),
-        Commands::Reload => cli::reload::execute(cli.verbose, config_path, &ctx),
+        Commands::Reload => cli::reload::execute(&ctx),
         Commands::Completions { .. } => unreachable!(),
     }
 }

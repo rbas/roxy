@@ -12,15 +12,12 @@ directory, and open `https://myapp.roxy` in your browser.
 ## Quick Start
 
 ```bash
-# Initial setup — installs Root CA, configures DNS,
-# trusts the certificate in the system trust store
+# One-time privileged setup — installs the CA, DNS,
+# and a system service that runs Roxy as your user
 sudo roxy install
 
 # Register a domain that proxies to localhost:3000
-sudo roxy register myapp.roxy --route "/=3000"
-
-# Start the daemon (requires sudo for ports 80/443)
-sudo roxy start
+roxy register myapp.roxy --route "/=3000"
 
 # Open in browser
 open https://myapp.roxy        # macOS
@@ -33,24 +30,24 @@ xdg-open https://myapp.roxy   # Linux
 | ---------------------------------- | ---------------------- |
 | `sudo roxy install`                | Initial setup          |
 | `sudo roxy uninstall [--force]`    | Full cleanup           |
-| `sudo roxy register <domain> ...`  | Register domain        |
-| `sudo roxy register --wildcard ..` | Register wildcard      |
-| `sudo roxy unregister <domain>`    | Remove domain          |
+| `roxy register <domain> ...`       | Register domain        |
+| `roxy register --wildcard ..`      | Register wildcard      |
+| `roxy unregister <domain>`         | Remove domain          |
 | `roxy list`                        | Show all domains       |
-| `sudo roxy route add ...`          | Add route to domain    |
+| `roxy route add ...`               | Add route to domain    |
 | `roxy route remove ...`            | Remove route           |
 | `roxy route list <domain>`         | List routes for domain |
-| `sudo roxy start [--foreground]`   | Start daemon           |
-| `sudo roxy stop`                   | Stop daemon            |
-| `sudo roxy restart`                | Restart daemon         |
-| `sudo roxy reload`                 | Reload configuration   |
+| `roxy start`                       | Start daemon           |
+| `roxy stop`                        | Stop daemon            |
+| `roxy restart`                     | Restart daemon         |
+| `roxy reload`                      | Reload configuration   |
 | `roxy status`                      | Show daemon status     |
 | `roxy logs [-n N] [-f]`            | View or follow logs    |
 | `roxy completions <shell>`         | Generate completions   |
 
-**Note:** Commands that modify system configuration
-(CA certs, DNS) or control the daemon (runs on ports
-80/443) require `sudo`.
+**Note:** Only `install` and `uninstall` modify system
+configuration and require `sudo`. Registration, routing,
+logs, reloads, and daemon control run as your user.
 
 ## Route Targets
 
@@ -132,12 +129,14 @@ must not leak across hops.
 
 ### Debugging Proxy Headers
 
-Enable debug logging to see the forwarding headers
-Roxy sets on each request
-(see [Logging and Verbosity](#logging-and-verbosity)):
+Set `daemon.log_level = "debug"` in the user configuration,
+restart, and follow the log to see the forwarding headers Roxy
+sets on each request (see
+[Logging and Verbosity](#logging-and-verbosity)):
 
 ```bash
-ROXY_LOG=debug sudo roxy start --foreground
+roxy restart
+roxy logs -f
 ```
 
 ```text
@@ -150,8 +149,8 @@ DEBUG Proxying HTTP request target=127.0.0.1:3000
 
 Register a domain with `--wildcard` to match the base
 domain **and** any single-level subdomain. Roxy generates
-a wildcard TLS certificate so every subdomain gets
-trusted HTTPS automatically.
+an exact certificate in memory for each requested hostname,
+so every matching subdomain gets trusted HTTPS automatically.
 
 ```bash
 roxy register myapp.roxy --wildcard --route "/=3000"
@@ -202,9 +201,8 @@ roxy route list --wildcard myapp.roxy
 roxy unregister --wildcard myapp.roxy
 ```
 
-This removes the wildcard registration and its
-certificate. Any exact registration for the same domain
-is left untouched.
+This removes the wildcard routing registration. Any exact
+registration for the same domain is left untouched.
 
 ### Configuration
 
@@ -251,20 +249,24 @@ navigate subdirectories
 
 ## Files and Directories
 
+Roxy keeps mutable state in the developer account that ran
+`sudo roxy install`:
+
 ```text
-/etc/roxy/
-├── config.toml          # Main configuration
-├── ca.key               # Root CA private key
-├── ca.crt               # Root CA certificate
-└── certs/
-    ├── <domain>.key     # Per-domain private key
-    └── <domain>.crt     # Per-domain certificate
+macOS
+~/Library/Application Support/Roxy/config.toml
+~/Library/Application Support/Roxy/ca.{key,crt}
+~/Library/Caches/Roxy/{roxy.pid,roxy.sock}
+~/Library/Logs/Roxy/roxy.log
 
-/var/run/roxy.pid        # PID file (when daemon runs)
-
-/var/log/roxy/
-└── roxy.log             # Daemon log file
+Linux
+~/.config/roxy/config.toml
+~/.local/share/roxy/ca.{key,crt}
+~/.local/state/roxy/{roxy.log,run/}
 ```
+
+Leaf certificates are generated from TLS SNI and cached only
+in daemon memory. No per-domain private keys are stored.
 
 DNS configuration (created by `roxy install`):
 
@@ -286,61 +288,41 @@ through the local DNS server.
 All paths are configurable via the `[paths]` section in
 `config.toml` (see [Configuration](#configuration)).
 
-## Auto-Start on Boot
+### Upgrading from the root-daemon layout
 
-### macOS (Homebrew)
+Run `sudo roxy install` once after upgrading. Roxy imports
+registrations and the Root CA from `/etc/roxy`, stops the old
+root daemon/service, writes the new user-owned configuration,
+and installs socket activation. The legacy `/etc/roxy`
+directory is left in place as a migration backup.
 
-If you installed Roxy via Homebrew, use `brew services`
-to start it automatically at boot:
+## Auto-Start and Privileged Ports
 
-```bash
-# Start now and auto-start at boot
-sudo brew services start roxy
+`sudo roxy install` configures this automatically. On macOS,
+launchd owns ports 80 and 443. On Linux, systemd socket units
+own them. The operating system passes those open listeners to
+Roxy, whose daemon process runs as your developer account.
 
-# Stop auto-start
-sudo brew services stop roxy
-```
-
-When managed by `brew services`, Roxy runs in foreground
-mode and launchd handles process supervision.
-
-### Linux (systemd)
-
-Create a systemd service file:
-
-```bash
-sudo tee /etc/systemd/system/roxy.service > /dev/null <<'EOF'
-[Unit]
-Description=Roxy local development proxy
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/roxy start --foreground
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now roxy
-```
+This is why routine commands do not need root privileges.
+There is no separate `brew services` or hand-written systemd
+unit to install.
 
 ## Daemon: Foreground vs Background
 
-**Background** (default) — forks to the background,
-writes a PID file, logs to `/var/log/roxy/roxy.log`:
+**Managed service** (default after installation) — launchd or
+systemd runs Roxy as your user and writes to the user log path:
 
 ```bash
-sudo roxy start
+roxy start
 ```
 
 **Foreground** — stays in the terminal, logs to stdout,
-stop with Ctrl+C. Useful for debugging:
+and stops with Ctrl+C. This is intended for development before
+system installation or with a custom config using unprivileged
+ports; the installed socket service already owns ports 80/443:
 
 ```bash
-sudo roxy start --foreground
+roxy --config ./roxy-dev.toml start --foreground
 ```
 
 ## Logging and Verbosity
@@ -354,20 +336,20 @@ roxy logs -f           # follow (like tail -f)
 roxy logs --clear      # clear the log file
 ```
 
-Change the log level (highest priority first):
+Set the daemon log level in your user configuration and restart:
 
-1. **Environment variable** —
-   `ROXY_LOG=debug sudo roxy start`
-2. **CLI flag** — `sudo roxy start --verbose`
-   (sets debug level)
-3. **Config file** — edit `/etc/roxy/config.toml`:
+```toml
+[daemon]
+log_level = "debug"
+```
 
-   ```toml
-   [daemon]
-   log_level = "debug"
-   ```
+```bash
+roxy restart
+```
 
-4. **Default** — `info`
+For an interactive foreground process with custom unprivileged
+ports, `ROXY_LOG=debug` overrides the configured level. The
+default level is `info`.
 
 Available levels: `error`, `warn`, `info`, `debug`.
 
@@ -411,19 +393,21 @@ All commands accept these global flags:
 
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
-| `-c`, `--config <PATH>` | `/etc/roxy/config.toml` | Config file |
+| `-c`, `--config <PATH>` | Platform user config | Config file |
 | `-v`, `--verbose` | off | Enable debug output |
 
 Example using a custom config:
 
 ```bash
-sudo roxy -c /opt/roxy/config.toml start
+roxy -c "$HOME/.config/roxy-dev.toml" start
 ```
 
 ## Configuration
 
-The configuration lives in `/etc/roxy/config.toml`
-(override with `--config`).
+The default configuration lives at
+`~/Library/Application Support/Roxy/config.toml` on macOS
+and `~/.config/roxy/config.toml` on Linux.
+Override it with `--config`.
 
 ### Daemon Section
 
@@ -435,8 +419,9 @@ dns_port = 1053
 log_level = "info"
 ```
 
-All three ports must be different. The daemon needs
-`sudo` to bind to ports below 1024.
+All three ports must be different. For an installed service,
+launchd or systemd owns the privileged HTTP and HTTPS ports;
+the daemon itself remains unprivileged.
 
 ### Domain Sections
 
@@ -467,14 +452,15 @@ Override where Roxy stores its data:
 
 ```toml
 [paths]
-data_dir = "/etc/roxy"
-pid_file = "/var/run/roxy.pid"
-log_file = "/var/log/roxy/roxy.log"
-certs_dir = "/etc/roxy/certs"
+data_dir = "/Users/me/Library/Application Support/Roxy"
+pid_file = "/Users/me/Library/Caches/Roxy/roxy.pid"
+log_file = "/Users/me/Library/Logs/Roxy/roxy.log"
+socket_path = "/Users/me/Library/Caches/Roxy/roxy.sock"
 ```
 
-The values above are the defaults. You only need this
-section if you want different locations.
+This macOS example illustrates the available fields. Linux
+defaults follow the user paths described above. You only need
+this section if you want different locations.
 
 ## Docker Integration
 
@@ -510,12 +496,15 @@ are sandboxed and cannot access the system trust store. See the
 [Linux guide](linux.md#snap-browsers-and-certificate-trust) for a one-time
 fix using `certutil`.
 
-### Certificates Show Wrong Domain Name
+### A Newly Registered Domain Does Not Respond
 
-If accessing `myapp.roxy` shows a certificate for a different domain, the daemon
-needs to be restarted to pick up newly registered domains.
+Registration automatically reloads the running daemon. If an
+external edit or watcher error prevented that reload, request
+one explicitly:
 
-**Solution:** Run `sudo roxy restart` after registering new domains.
+```bash
+roxy reload
+```
 
 ### "Connection Refused" or "This site can't be reached"
 
@@ -528,7 +517,7 @@ roxy status
 If it's not running, start it:
 
 ```bash
-sudo roxy start
+roxy start
 ```
 
 Verify DNS is working:
@@ -557,7 +546,8 @@ sudo lsof -i :1053
 ```
 
 Stop the conflicting service or configure Roxy to use
-different ports in `/etc/roxy/config.toml`.
+different ports in your user configuration file, then rerun
+`sudo roxy install` so the socket units use the new ports.
 
 ### Backend Service Not Responding
 

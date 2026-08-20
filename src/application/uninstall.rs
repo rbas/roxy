@@ -61,7 +61,7 @@ impl<'a> Uninstall<'a> {
         })
     }
 
-    /// Perform the full uninstall: stop daemon, remove certs, DNS,
+    /// Perform the full uninstall: stop daemon, remove the Root CA, DNS,
     /// data directory, PID file, and logs.
     pub fn execute(&self) -> Result<UninstallResult> {
         let mut steps: Vec<(String, StepOutcome)> = Vec::new();
@@ -77,7 +77,7 @@ impl<'a> Uninstall<'a> {
 
     fn stop_daemon(&self, steps: &mut Vec<(String, StepOutcome)>) -> Result<()> {
         if self.daemon.get_running_pid()?.is_some() {
-            self.daemon.stop_gracefully(Duration::from_millis(500))?;
+            self.daemon.stop_gracefully(Duration::from_secs(2))?;
             steps.push((
                 "Stop daemon".into(),
                 StepOutcome::Success("Daemon stopped.".into()),
@@ -92,23 +92,6 @@ impl<'a> Uninstall<'a> {
     }
 
     fn remove_certificates(&self, steps: &mut Vec<(String, StepOutcome)>) {
-        let domains = match self.domains.list() {
-            Ok(domains) => domains,
-            Err(e) => {
-                warn!(error = %e, "Could not read domain list for certificate cleanup");
-                Vec::new()
-            }
-        };
-
-        for registration in &domains {
-            let label = format!("Remove cert: {}", registration.display_pattern());
-            let outcome = match self.certs.remove(registration.pattern()) {
-                Ok(_) => StepOutcome::Success("Removed.".into()),
-                Err(e) => StepOutcome::Warning(format!("Failed: {}", e)),
-            };
-            steps.push((label, outcome));
-        }
-
         let ca_outcome = match self.certs.remove_ca() {
             Ok(_) => StepOutcome::Success("Root CA removed.".into()),
             Err(e) => StepOutcome::Warning(format!("Failed to remove Root CA: {}", e)),
@@ -225,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_warns_on_cert_removal_failure() {
+    fn uninstall_warns_on_ca_removal_failure() {
         let repo = InMemoryDomainRepository::with_domains(vec![registration("myapp.roxy")]);
         let certs = InMemoryCertificateManager::always_failing();
         let daemon = InMemoryDaemonControl::stopped();
@@ -236,14 +219,11 @@ mod tests {
         let result = svc.execute().unwrap();
 
         // Cert removal should warn, not fail the whole operation
-        let cert_steps: Vec<_> = result
+        let ca_step = result
             .steps
             .iter()
-            .filter(|(label, _)| label.starts_with("Remove cert"))
-            .collect();
-        assert!(!cert_steps.is_empty());
-        for (_, outcome) in cert_steps {
-            assert!(matches!(outcome, StepOutcome::Warning(_)));
-        }
+            .find(|(label, _)| label == "Remove Root CA")
+            .unwrap();
+        assert!(matches!(ca_step.1, StepOutcome::Warning(_)));
     }
 }

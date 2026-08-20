@@ -1,4 +1,4 @@
-use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, PKCS_ECDSA_P256_SHA256};
+use rcgen::{BasicConstraints, IsCa, KeyPair, PKCS_ECDSA_P256_SHA256};
 use std::fs;
 use std::path::PathBuf;
 
@@ -77,36 +77,6 @@ impl RootCA {
         })?;
 
         Ok(())
-    }
-
-    /// Load the CA key pair for signing
-    pub fn load_key_pair(&self) -> Result<KeyPair, CertError> {
-        let key_pem = fs::read_to_string(self.key_path()).map_err(|e| CertError::ReadError {
-            path: self.key_path(),
-            source: e,
-        })?;
-
-        KeyPair::from_pem(&key_pem).map_err(|e| CertError::GenerationError(e.to_string()))
-    }
-
-    /// Sign a certificate with this CA
-    /// Returns the signed certificate PEM
-    pub fn sign_certificate(
-        &self,
-        params: CertificateParams,
-        key_pair: &KeyPair,
-    ) -> Result<String, CertError> {
-        let ca_key_pair = self.load_key_pair()?;
-
-        let ca_params = super::generator::build_ca_cert_params();
-        let issuer = Issuer::from_params(&ca_params, &ca_key_pair);
-
-        // Sign the domain certificate
-        let cert = params
-            .signed_by(key_pair, &issuer)
-            .map_err(|e| CertError::GenerationError(e.to_string()))?;
-
-        Ok(cert.pem())
     }
 
     /// Delete the CA certificate and key (used by uninstall)

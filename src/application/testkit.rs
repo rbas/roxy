@@ -15,37 +15,14 @@ use crate::domain::{
 use super::ports::{
     CertificateError, CertificateManager, ConfigLoadError, ConfigLoader, DaemonConnection,
     DaemonConnectionError, DaemonControl, DaemonRuntimeInfo, DnsConfigError, DnsManager,
-    DomainRepository, NetworkInfo, RegistrationProvider, RepositoryError, SystemSetup,
+    DomainRepository, NetworkInfo, RepositoryError, SystemSetup,
 };
-
-// ---------------------------------------------------------------------------
-// InMemoryRegistrationProvider
-// ---------------------------------------------------------------------------
-
-pub struct InMemoryRegistrationProvider {
-    registrations: Vec<DomainRegistration>,
-}
-
-impl InMemoryRegistrationProvider {
-    pub fn new(registrations: Vec<DomainRegistration>) -> Self {
-        Self { registrations }
-    }
-}
-
-impl RegistrationProvider for InMemoryRegistrationProvider {
-    fn name(&self) -> &str {
-        "in-memory"
-    }
-
-    fn load(&self) -> anyhow::Result<Vec<DomainRegistration>> {
-        Ok(self.registrations.clone())
-    }
-}
 
 // ---------------------------------------------------------------------------
 // InMemoryDomainRepository
 // ---------------------------------------------------------------------------
 
+#[derive(Default)]
 pub struct InMemoryDomainRepository {
     domains: RefCell<Vec<DomainRegistration>>,
 }
@@ -119,10 +96,10 @@ impl DomainRepository for InMemoryDomainRepository {
 // InMemoryCertificateManager
 // ---------------------------------------------------------------------------
 
+#[derive(Default)]
 pub struct InMemoryCertificateManager {
     ca_installed: RefCell<bool>,
-    certs: RefCell<Vec<String>>,
-    /// When true, all cert operations fail.
+    /// When true, all CA operations fail.
     fail_operations: bool,
 }
 
@@ -130,7 +107,6 @@ impl InMemoryCertificateManager {
     pub fn new() -> Self {
         Self {
             ca_installed: RefCell::new(false),
-            certs: RefCell::new(Vec::new()),
             fail_operations: false,
         }
     }
@@ -138,7 +114,6 @@ impl InMemoryCertificateManager {
     pub fn always_failing() -> Self {
         Self {
             ca_installed: RefCell::new(false),
-            certs: RefCell::new(Vec::new()),
             fail_operations: true,
         }
     }
@@ -146,7 +121,6 @@ impl InMemoryCertificateManager {
     pub fn with_ca_installed() -> Self {
         Self {
             ca_installed: RefCell::new(true),
-            certs: RefCell::new(Vec::new()),
             fail_operations: false,
         }
     }
@@ -167,28 +141,6 @@ impl CertificateManager for InMemoryCertificateManager {
         Ok(*self.ca_installed.borrow())
     }
 
-    fn create_and_install(&self, pattern: &DomainPattern) -> Result<(), CertificateError> {
-        if self.fail_operations {
-            return Err(CertificateError::OperationFailed(anyhow::anyhow!(
-                "simulated cert failure"
-            )));
-        }
-        self.certs.borrow_mut().push(pattern.display_pattern());
-        Ok(())
-    }
-
-    fn remove(&self, pattern: &DomainPattern) -> Result<(), CertificateError> {
-        if self.fail_operations {
-            return Err(CertificateError::OperationFailed(anyhow::anyhow!(
-                "simulated remove failure"
-            )));
-        }
-        self.certs
-            .borrow_mut()
-            .retain(|c| *c != pattern.display_pattern());
-        Ok(())
-    }
-
     fn remove_ca(&self) -> Result<(), CertificateError> {
         if self.fail_operations {
             return Err(CertificateError::OperationFailed(anyhow::anyhow!(
@@ -197,10 +149,6 @@ impl CertificateManager for InMemoryCertificateManager {
         }
         *self.ca_installed.borrow_mut() = false;
         Ok(())
-    }
-
-    fn exists(&self, pattern: &DomainPattern) -> bool {
-        self.certs.borrow().contains(&pattern.display_pattern())
     }
 
     fn is_trusted(&self) -> Result<bool, CertificateError> {
@@ -212,6 +160,7 @@ impl CertificateManager for InMemoryCertificateManager {
 // InMemoryConfigLoader
 // ---------------------------------------------------------------------------
 
+#[derive(Default)]
 pub struct InMemoryConfigLoader {
     file_exists: RefCell<bool>,
     daemon_config: DaemonConfig,
@@ -292,6 +241,7 @@ impl DaemonControl for InMemoryDaemonControl {
 // InMemoryDnsManager
 // ---------------------------------------------------------------------------
 
+#[derive(Default)]
 pub struct InMemoryDnsManager {
     configured: RefCell<bool>,
 }
@@ -358,6 +308,7 @@ impl NetworkInfo for InMemoryNetworkInfo {
 // InMemorySystemSetup
 // ---------------------------------------------------------------------------
 
+#[derive(Default)]
 pub struct InMemorySystemSetup {
     directories_created: RefCell<bool>,
     data_exists: RefCell<bool>,

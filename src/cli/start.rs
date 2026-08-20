@@ -9,6 +9,7 @@ use crate::config::DaemonConfig;
 use crate::infrastructure::network::get_lan_ip;
 use crate::infrastructure::paths::RoxyPaths;
 use crate::infrastructure::pid::PidFile;
+use crate::infrastructure::service;
 
 pub fn execute(
     foreground: bool,
@@ -24,6 +25,23 @@ pub fn execute(
     if foreground {
         // Run in foreground (blocking) — daemon module lives in binary crate
         return crate::daemon::lifecycle::run(verbose, config_path, paths);
+    }
+
+    if service::is_installed() {
+        service::activate(ready.http_port)?;
+        for _ in 0..20 {
+            if let Some(pid) = pid_file.get_running_pid()? {
+                println!("Roxy daemon started (PID: {pid})");
+                println!(
+                    "Listening on 0.0.0.0:{} (HTTP) and 0.0.0.0:{} (HTTPS)",
+                    ready.http_port, ready.https_port
+                );
+                println!("Use 'roxy stop' to stop the daemon");
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        anyhow::bail!("Roxy service was activated but did not become ready");
     }
 
     // Fork to background
