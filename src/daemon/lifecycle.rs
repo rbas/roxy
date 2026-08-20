@@ -22,6 +22,11 @@ use crate::infrastructure::tracing::{TracingOutput, init_tracing};
 /// PID file management, signal handling, and server execution.
 #[tokio::main]
 pub async fn run(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Result<()> {
+    // Load config before tracing so the configured log level applies to both
+    // supervisor-managed and directly launched daemon processes.
+    let config_store = ConfigStore::new(config_path.to_path_buf());
+    let config = config_store.load()?;
+
     // When running interactively (stdout is a TTY), log to stdout
     // When running as daemon (stdout is /dev/null), log to file
     let output = if std::io::stdout().is_terminal() {
@@ -29,7 +34,7 @@ pub async fn run(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Result
     } else {
         TracingOutput::File(paths.log_file.clone())
     };
-    init_tracing(verbose, output);
+    init_tracing(verbose, &config.daemon.log_level, output);
 
     info!("Roxy daemon started");
 
@@ -37,11 +42,6 @@ pub async fn run(verbose: bool, config_path: &Path, paths: &RoxyPaths) -> Result
     pid_file.write()?;
 
     println!("Starting Roxy daemon...");
-
-    // Load config fresh from disk (this path is used by the forked
-    // subprocess, so it must re-read from the config file)
-    let config_store = ConfigStore::new(config_path.to_path_buf());
-    let config = config_store.load()?;
 
     // Create reload channel for hot-reloading registrations (nudge-based)
     let (reload_tx, reload_rx) = mpsc::channel::<()>(4);

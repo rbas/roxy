@@ -43,7 +43,7 @@ pub fn execute(ctx: &AppContext, daemon_config: &DaemonConfig) -> Result<()> {
             println!("Roxy daemon: stopped");
             println!("  LAN IP: {}{}", status.lan_ip, offline_note);
             println!("  Root CA: {}", ca_label);
-            println!("\nStart with: sudo roxy start");
+            println!("\nStart with: roxy start");
         }
     }
 

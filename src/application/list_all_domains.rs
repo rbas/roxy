@@ -46,19 +46,17 @@ impl<'a> ListAllDomains<'a> {
     /// (config + Docker), falling back to config-only if daemon is not running.
     pub fn execute(&self) -> Result<ListResult> {
         let cert_trusted = self.certs.is_trusted().ok();
+        let https_available = cert_trusted.unwrap_or(false);
 
         // Try daemon first — it has config + Docker domains
         match self.daemon.list_registrations() {
             Ok(regs) => {
                 let domains = regs
                     .into_iter()
-                    .map(|reg| {
-                        let has_cert = self.certs.exists(reg.pattern());
-                        DomainInfo {
-                            registration: reg,
-                            has_cert,
-                            cert_trusted,
-                        }
+                    .map(|reg| DomainInfo {
+                        registration: reg,
+                        has_cert: https_available,
+                        cert_trusted,
                     })
                     .collect();
 
@@ -79,13 +77,10 @@ impl<'a> ListAllDomains<'a> {
         let regs = self.domains.list()?;
         let domains = regs
             .into_iter()
-            .map(|reg| {
-                let has_cert = self.certs.exists(reg.pattern());
-                DomainInfo {
-                    registration: reg,
-                    has_cert,
-                    cert_trusted,
-                }
+            .map(|reg| DomainInfo {
+                registration: reg,
+                has_cert: https_available,
+                cert_trusted,
             })
             .collect();
 
@@ -149,7 +144,6 @@ mod tests {
         let daemon = InMemoryDaemonConnection::new(vec![registration("app.roxy")]);
         let repo = InMemoryDomainRepository::new();
         let certs = InMemoryCertificateManager::with_ca_installed();
-        certs.create_and_install(&exact("app.roxy")).unwrap();
 
         let svc = ListAllDomains::new(&daemon, &repo, &certs);
         let result = svc.execute().unwrap();

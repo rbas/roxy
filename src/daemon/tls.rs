@@ -5,18 +5,20 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 use anyhow::{Context, Result};
-use rcgen::{Issuer, KeyPair, PKCS_ECDSA_P256_SHA256, SanType};
+use rcgen::{
+    CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, Issuer, KeyPair,
+    KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, SanType,
+};
 use rustls::ServerConfig;
-use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::PrivateKeyDer;
 use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
 use tokio_rustls::TlsAcceptor;
-use tracing::{info, warn};
+use tracing::warn;
 
-use crate::domain::{DomainName, DomainPattern};
-use crate::infrastructure::certs::CertificateGenerator;
-use crate::infrastructure::certs::generator::{build_ca_cert_params, build_leaf_cert_params};
+use crate::domain::DomainName;
+use crate::infrastructure::certs::generator::build_ca_cert_params;
+use time::{Duration, OffsetDateTime};
 
 const ON_DEMAND_CERT_CACHE_MAX: usize = 256;
 
@@ -27,9 +29,7 @@ const ON_DEMAND_CERT_CACHE_MAX: usize = 256;
 /// "Domain Not Registered" page instead of the browser showing a TLS error.
 #[derive(Debug)]
 struct DomainCertResolver {
-    /// All registered certificates, stored with their pattern for matching.
-    certs: Vec<(DomainPattern, Arc<CertifiedKey>)>,
-    ca_key_pem: Option<String>,
+    ca_key_pem: String,
     on_demand: RwLock<HashMap<String, Arc<CertifiedKey>>>,
 }
 
@@ -42,23 +42,14 @@ impl ResolvesServerCert for DomainCertResolver {
             return Some(cert);
         }
 
-        // Find the first registered cert whose pattern matches the hostname.
-        // Certs are pre-sorted by specificity (most specific first).
-        for (pattern, cert) in &self.certs {
-            if pattern.matches_hostname(&hostname) {
-                return Some(cert.clone());
-            }
-        }
-
         // Generate an on-demand cert for valid `.roxy` hostnames if we
         // can read the local CA private key.
-        let ca_key_pem = self.ca_key_pem.as_deref()?;
         if DomainName::new(hostname.as_str()).is_err() {
             warn!(hostname = %hostname, "TLS: no certificate for domain");
             return None;
         }
 
-        match generate_on_demand_certified_key(hostname.as_str(), ca_key_pem) {
+        match generate_on_demand_certified_key(hostname.as_str(), &self.ca_key_pem) {
             Ok(cert) => {
                 if let Ok(mut cache) = self.on_demand.write() {
                     // Bound memory: on-demand certs are cheap to regenerate.
@@ -77,72 +68,21 @@ impl ResolvesServerCert for DomainCertResolver {
     }
 }
 
-/// Load all domain certificates into a single TLS acceptor with SNI
-pub fn create_tls_acceptor(
-    patterns: &[DomainPattern],
-    certs_dir: &Path,
-    data_dir: &Path,
-) -> Result<Option<TlsAcceptor>> {
+/// Create a TLS acceptor that generates exact leaf certificates from SNI.
+///
+/// The Root CA is trusted once during installation. Domain registration does
+/// not create files or mutate a trust store.
+pub fn create_tls_acceptor(data_dir: &Path) -> Result<Option<TlsAcceptor>> {
     let ca_key_pem = match load_ca_key_pem(data_dir) {
-        Ok(pem) => pem,
+        Ok(Some(pem)) => pem,
+        Ok(None) => return Ok(None),
         Err(e) => {
             warn!(error = %e, "TLS: failed to load Roxy CA key (on-demand certificates disabled)");
-            None
+            return Ok(None);
         }
     };
 
-    // If we have neither per-domain certificates nor a Root CA to generate
-    // on-demand certificates, HTTPS can't be served.
-    if patterns.is_empty() && ca_key_pem.is_none() {
-        return Ok(None);
-    }
-
-    let mut certs: Vec<(DomainPattern, Arc<CertifiedKey>)> = Vec::new();
-
-    let generator = CertificateGenerator::new(data_dir.to_path_buf(), certs_dir.to_path_buf());
-
-    for pattern in patterns {
-        let stem = crate::infrastructure::certs::cert_name(pattern);
-        let cert_path = certs_dir.join(format!("{}.crt", stem));
-        let key_path = certs_dir.join(format!("{}.key", stem));
-
-        if !cert_path.exists() || !key_path.exists() {
-            info!(domain = %pattern, "Certificate missing, generating automatically");
-            match generator.generate(pattern) {
-                Ok(cert) => {
-                    if let Err(e) = generator.save(&cert) {
-                        warn!(domain = %pattern, error = %e, "Failed to save auto-generated certificate, skipping HTTPS for this domain");
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    warn!(domain = %pattern, error = %e, "Failed to auto-generate certificate, skipping HTTPS for this domain");
-                    continue;
-                }
-            }
-        }
-
-        let loaded_certs = load_certs(&cert_path)?;
-        let key = load_private_key(&key_path)?;
-
-        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key)
-            .context("Failed to create signing key")?;
-
-        let certified_key = Arc::new(CertifiedKey::new(loaded_certs, signing_key));
-        certs.push((pattern.clone(), certified_key));
-    }
-
-    // If all certificate loads/generations failed and we have no CA key for
-    // on-demand certs, HTTPS can't serve anything — don't start the listener.
-    if certs.is_empty() && ca_key_pem.is_none() {
-        return Ok(None);
-    }
-
-    // Most-specific pattern wins (longest base domain).
-    certs.sort_by_key(|(p, _)| std::cmp::Reverse(p.specificity()));
-
     let resolver = Arc::new(DomainCertResolver {
-        certs,
         ca_key_pem,
         on_demand: RwLock::new(HashMap::new()),
     });
@@ -194,16 +134,89 @@ fn generate_on_demand_certified_key(hostname: &str, ca_key_pem: &str) -> Result<
     Ok(Arc::new(CertifiedKey::new(certs, signing_key)))
 }
 
-fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
-    let certs: Vec<_> = CertificateDer::pem_file_iter(path)
-        .with_context(|| format!("Failed to open cert file: {}", path.display()))?
-        .collect::<Result<Vec<_>, _>>()
-        .context("Failed to parse certificates")?;
-
-    Ok(certs)
+fn build_leaf_cert_params(common_name: &str, sans: Vec<SanType>) -> CertificateParams {
+    let mut params = CertificateParams::default();
+    params.subject_alt_names = sans;
+    let mut distinguished_name = DistinguishedName::new();
+    distinguished_name.push(DnType::CommonName, common_name);
+    params.distinguished_name = distinguished_name;
+    params.not_before = OffsetDateTime::now_utc() - Duration::days(1);
+    params.not_after = OffsetDateTime::now_utc() + Duration::days(825);
+    params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    params
 }
 
-fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
-    PrivateKeyDer::from_pem_file(path)
-        .with_context(|| format!("Failed to load private key from: {}", path.display()))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_ca_disables_tls() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(create_tls_acceptor(directory.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn creates_an_in_memory_leaf_key() {
+        let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let certified =
+            generate_on_demand_certified_key("app.roxy", &ca_key.serialize_pem()).unwrap();
+
+        assert_eq!(certified.cert.len(), 1);
+        assert!(!certified.cert[0].as_ref().is_empty());
+    }
+
+    #[test]
+    fn invalid_ca_key_is_rejected() {
+        let error = generate_on_demand_certified_key("app.roxy", "not a key").unwrap_err();
+        assert!(error.to_string().contains("Failed to parse CA key"));
+    }
+
+    #[tokio::test]
+    async fn generated_leaf_chains_to_a_legacy_installed_ca() {
+        use rustls::pki_types::ServerName;
+        use rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
+
+        let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut legacy_params = CertificateParams::default();
+        let mut legacy_name = DistinguishedName::new();
+        legacy_name.push(DnType::CommonName, "Roxy Local Development CA");
+        legacy_name.push(DnType::OrganizationName, "Roxy");
+        legacy_params.distinguished_name = legacy_name;
+        legacy_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        legacy_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let ca_cert = legacy_params.self_signed(&ca_key).unwrap();
+
+        let resolver = Arc::new(DomainCertResolver {
+            ca_key_pem: ca_key.serialize_pem(),
+            on_demand: RwLock::new(HashMap::new()),
+        });
+        let server = TlsAcceptor::from(Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_cert_resolver(resolver),
+        ));
+
+        let mut roots = RootCertStore::empty();
+        roots.add(ca_cert.der().clone()).unwrap();
+        let client = TlsConnector::from(Arc::new(
+            ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        ));
+        let server_name = ServerName::try_from("app.roxy").unwrap();
+        let (client_io, server_io) = tokio::io::duplex(16 * 1024);
+
+        let (client_result, server_result) = tokio::join!(
+            client.connect(server_name, client_io),
+            server.accept(server_io)
+        );
+        client_result.unwrap();
+        server_result.unwrap();
+    }
 }

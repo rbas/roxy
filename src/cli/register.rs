@@ -1,7 +1,6 @@
 use anyhow::Result;
 
 use super::context::AppContext;
-use crate::application::StepOutcome;
 use crate::application::register_domain::RegisterDomain;
 use crate::domain::{DomainPattern, Route};
 
@@ -19,27 +18,10 @@ pub fn execute(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("Invalid route: {}", e))?;
 
-    let use_case = RegisterDomain::new(&ctx.config_store, &ctx.cert_service);
-
-    println!(
-        "Generating SSL certificate for {}...",
-        pattern.display_pattern()
-    );
+    let use_case = RegisterDomain::new(&ctx.config_store);
 
     let result = use_case.execute(pattern, parsed_routes)?;
-
-    match &result.cert_outcome {
-        StepOutcome::Success(msg) => println!("  {}", msg),
-        StepOutcome::Warning(msg) => {
-            eprintln!("  {}", msg);
-            eprintln!(
-                "  Run 'sudo roxy register {}{}' to enable HTTPS.",
-                result.registration.domain(),
-                if wildcard { " --wildcard" } else { "" }
-            );
-        }
-        StepOutcome::Skipped(msg) => println!("  {}", msg),
-    }
+    ctx.reload_if_running()?;
 
     println!(
         "\nRegistered domain: {}",
@@ -57,7 +39,7 @@ pub fn execute(
             "disabled"
         }
     );
-    println!("\nStart the proxy with: roxy start");
+    println!("\nThe running proxy has been updated.");
 
     Ok(())
 }

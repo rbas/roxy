@@ -6,6 +6,7 @@ use crate::application::uninstall::Uninstall;
 use crate::infrastructure::dns::get_dns_service;
 use crate::infrastructure::filesystem::FileSystemSetup;
 use crate::infrastructure::paths::RoxyPaths;
+use crate::infrastructure::service;
 
 pub fn execute(force: bool, ctx: &AppContext, paths: &RoxyPaths) -> Result<()> {
     let dns_service = get_dns_service()?;
@@ -34,6 +35,7 @@ pub fn execute(force: bool, ctx: &AppContext, paths: &RoxyPaths) -> Result<()> {
 
     println!("Uninstalling Roxy...\n");
 
+    service::uninstall()?;
     let result = use_case.execute()?;
 
     for (label, outcome) in &result.steps {

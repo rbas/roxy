@@ -24,14 +24,6 @@ impl SystemSetup for FileSystemSetup<'_> {
             )
         })?;
 
-        fs::create_dir_all(&self.paths.certs_dir).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to create certs directory {}: {}",
-                self.paths.certs_dir.display(),
-                e
-            )
-        })?;
-
         if let Some(log_dir) = self.paths.log_file.parent() {
             fs::create_dir_all(log_dir).map_err(|e| {
                 anyhow::anyhow!(

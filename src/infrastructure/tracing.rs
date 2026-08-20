@@ -12,10 +12,10 @@ pub enum TracingOutput {
 }
 
 /// Initialize tracing based on configuration
-/// Priority: ROXY_LOG env > verbose flag > default (info)
-pub fn init_tracing(verbose: bool, output: TracingOutput) {
+/// Priority: ROXY_LOG env > verbose flag > configured level.
+pub fn init_tracing(verbose: bool, configured_level: &str, output: TracingOutput) {
     let filter = EnvFilter::try_from_env("ROXY_LOG").unwrap_or_else(|_| {
-        let level = if verbose { "debug" } else { "info" };
+        let level = if verbose { "debug" } else { configured_level };
         EnvFilter::new(format!("roxy={}", level))
     });
 

@@ -26,22 +26,11 @@ class Roxy < Formula
     bin.install "roxy"
   end
 
-  service do
-    name macos: "cz.rbas.roxy", linux: "roxy"
-    run [opt_bin/"roxy", "--config", "/etc/roxy/config.toml", "start", "--foreground"]
-    keep_alive true
-    require_root true
-    log_path "/var/log/roxy/roxy.log"
-    error_log_path "/var/log/roxy/roxy.log"
-  end
-
   def caveats
     <<~EOS
-      Roxy requires a one-time setup before use:
+      Roxy requires one privileged setup. This installs its socket-activated
+      service, which runs as your developer account:
         sudo roxy install
-
-      To start roxy now and auto-start at boot:
-        sudo brew services start roxy
     EOS
   end
 

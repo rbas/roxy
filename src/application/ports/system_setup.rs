@@ -1,6 +1,6 @@
 /// Port for system-level directory and file operations.
 pub trait SystemSetup {
-    /// Create required data, certs, and log directories.
+    /// Create required data and log directories.
     fn create_directories(&self) -> anyhow::Result<()>;
 
     /// Remove the data directory. Returns true if it existed.

@@ -2,27 +2,24 @@ use anyhow::{Result, bail};
 
 use crate::domain::{DomainPattern, DomainRegistration, Route};
 
-use super::StepOutcome;
-use super::ports::{CertificateManager, DomainRepository};
+use super::ports::DomainRepository;
 
 /// Result of a successful domain registration.
 pub struct RegisterResult {
     pub registration: DomainRegistration,
-    pub cert_outcome: StepOutcome,
 }
 
 /// Use case: register a new domain with routes.
 pub struct RegisterDomain<'a> {
     domains: &'a dyn DomainRepository,
-    certs: &'a dyn CertificateManager,
 }
 
 impl<'a> RegisterDomain<'a> {
-    pub fn new(domains: &'a dyn DomainRepository, certs: &'a dyn CertificateManager) -> Self {
-        Self { domains, certs }
+    pub fn new(domains: &'a dyn DomainRepository) -> Self {
+        Self { domains }
     }
 
-    /// Validate inputs, generate a certificate, and persist the registration.
+    /// Validate inputs and persist the registration.
     pub fn execute(&self, pattern: DomainPattern, routes: Vec<Route>) -> Result<RegisterResult> {
         if routes.is_empty() {
             bail!(
@@ -47,27 +44,14 @@ impl<'a> RegisterDomain<'a> {
             );
         }
 
-        let mut registration = DomainRegistration::new(pattern.clone(), routes);
-
-        // Generate certificate (graceful fallback)
-        let cert_outcome = match self.certs.create_and_install(&pattern) {
-            Ok(()) => {
-                registration.enable_https();
-                StepOutcome::Success("Certificate installed and trusted.".into())
-            }
-            Err(e) => StepOutcome::Warning(format!(
-                "Failed to generate certificate: {}. \
-                 HTTPS will not be available for this domain.",
-                e
-            )),
-        };
+        let mut registration = DomainRegistration::new(pattern, routes);
+        // HTTPS is provided by the daemon's CA-backed SNI resolver. Registering
+        // a route never needs to create or persist a leaf certificate.
+        registration.enable_https();
 
         self.domains.add(registration.clone())?;
 
-        Ok(RegisterResult {
-            registration,
-            cert_outcome,
-        })
+        Ok(RegisterResult { registration })
     }
 }
 
@@ -79,39 +63,20 @@ mod tests {
     #[test]
     fn registers_domain_with_https() {
         let repo = InMemoryDomainRepository::new();
-        let certs = InMemoryCertificateManager::new();
-        let svc = RegisterDomain::new(&repo, &certs);
+        let svc = RegisterDomain::new(&repo);
 
         let result = svc
             .execute(exact("myapp.roxy"), vec![proxy_route("/", 3000)])
             .unwrap();
 
         assert!(result.registration.is_https_enabled());
-        assert!(matches!(result.cert_outcome, StepOutcome::Success(_)));
-        assert!(repo.get(&exact("myapp.roxy")).unwrap().is_some());
-    }
-
-    #[test]
-    fn registers_domain_without_https_when_cert_fails() {
-        let repo = InMemoryDomainRepository::new();
-        let certs = InMemoryCertificateManager::always_failing();
-        let svc = RegisterDomain::new(&repo, &certs);
-
-        let result = svc
-            .execute(exact("myapp.roxy"), vec![proxy_route("/", 3000)])
-            .unwrap();
-
-        assert!(!result.registration.is_https_enabled());
-        assert!(matches!(result.cert_outcome, StepOutcome::Warning(_)));
-        // Domain is still registered despite cert failure
         assert!(repo.get(&exact("myapp.roxy")).unwrap().is_some());
     }
 
     #[test]
     fn rejects_empty_routes() {
         let repo = InMemoryDomainRepository::new();
-        let certs = InMemoryCertificateManager::new();
-        let svc = RegisterDomain::new(&repo, &certs);
+        let svc = RegisterDomain::new(&repo);
 
         let err = svc.execute(exact("myapp.roxy"), vec![]).err().unwrap();
         assert!(err.to_string().contains("At least one route"));
@@ -120,8 +85,7 @@ mod tests {
     #[test]
     fn rejects_duplicate_domain() {
         let repo = InMemoryDomainRepository::new();
-        let certs = InMemoryCertificateManager::new();
-        let svc = RegisterDomain::new(&repo, &certs);
+        let svc = RegisterDomain::new(&repo);
 
         svc.execute(exact("myapp.roxy"), vec![proxy_route("/", 3000)])
             .unwrap();
@@ -136,8 +100,7 @@ mod tests {
     #[test]
     fn multiple_routes_are_persisted() {
         let repo = InMemoryDomainRepository::new();
-        let certs = InMemoryCertificateManager::new();
-        let svc = RegisterDomain::new(&repo, &certs);
+        let svc = RegisterDomain::new(&repo);
 
         let routes = vec![proxy_route("/", 3000), proxy_route("/api", 3001)];
         let result = svc.execute(exact("myapp.roxy"), routes).unwrap();

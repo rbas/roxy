@@ -21,7 +21,7 @@ pub fn execute(lines: usize, clear: bool, follow: bool, paths: &RoxyPaths) -> Re
     if !log_path.exists() {
         println!("No logs found.");
         println!("Log file: {}", log_path.display());
-        println!("\nStart the daemon to generate logs: sudo roxy start");
+        println!("\nStart the daemon to generate logs: roxy start");
         return Ok(());
     }
 

@@ -217,7 +217,10 @@ mod tests {
         mpsc::Receiver<()>,
         tempfile::TempDir,
     ) {
-        let dir = tempfile::tempdir().unwrap();
+        // Use the conventional short Unix-socket location. Platform temp
+        // directories can be long enough to exceed sockaddr_un limits and
+        // some macOS sandboxes deny socket creation there.
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
         let sock = dir.path().join("test.sock");
 
         let state: SharedState = Arc::new(ArcSwap::from_pointee(RuntimeState::new(registrations)));
@@ -231,12 +234,23 @@ mod tests {
             https: 443,
             dns: 1053,
         };
-        tokio::spawn(async move {
-            let _ = serve(sock_clone, state, reload_tx, cancel_serve, test_ports).await;
+        let handle = tokio::spawn(async move {
+            serve(sock_clone, state, reload_tx, cancel_serve, test_ports).await
         });
 
-        // Give the listener time to bind
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !sock.exists() {
+                if handle.is_finished() {
+                    panic!(
+                        "management socket task exited before becoming ready: {:?}",
+                        handle.await
+                    );
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("management socket did not become ready");
 
         (sock, cancel, reload_rx, dir)
     }
@@ -317,7 +331,7 @@ mod tests {
         assert_eq!(domains.len(), 1);
         assert_eq!(domains[0]["pattern"], "app.roxy");
         assert_eq!(domains[0]["source"], "config");
-        assert_eq!(domains[0]["https"], false);
+        assert_eq!(domains[0]["https"], true);
         let routes = domains[0]["routes"].as_array().unwrap();
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0]["path"], "/");
@@ -370,7 +384,13 @@ mod tests {
         assert!(sock.exists());
 
         cancel.cancel();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while sock.exists() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("management socket was not removed");
         assert!(!sock.exists());
     }
 }

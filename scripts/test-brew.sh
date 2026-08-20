@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Test Homebrew formula locally with brew services.
+# Test the Homebrew formula and Roxy's managed service locally.
 #
 # Usage:
 #   ./scripts/test-brew.sh          # build + install + show next steps
@@ -16,7 +16,7 @@ VERSION=$(grep '^version' "$REPO_ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/
 # ── Clean mode ─────────────────────────────────────────────
 if [[ "${1:-}" == "clean" ]]; then
     echo "==> Cleaning up test install..."
-    sudo brew services stop roxy 2>/dev/null || true
+    sudo roxy uninstall --force 2>/dev/null || true
     brew uninstall roxy 2>/dev/null || true
 
     # Restore tap from remote
@@ -27,7 +27,6 @@ if [[ "${1:-}" == "clean" ]]; then
     fi
 
     # Clean up roxy state
-    sudo roxy uninstall --force 2>/dev/null || true
     rm -f "$TARBALL"
 
     echo "Done. Tap restored, roxy uninstalled."
@@ -79,22 +78,16 @@ echo "  # 1. One-time setup"
 echo "  sudo roxy install"
 echo ""
 echo "  # 2. Register a test domain"
-echo "  sudo roxy register test.roxy --route '/=8080'"
+echo "  roxy register test.roxy --route '/=8080'"
 echo ""
-echo "  # 3a. Test manual start"
-echo "  sudo roxy start"
+echo "  # 3. Test the automatically installed user service"
 echo "  roxy status"
-echo "  sudo roxy stop"
-echo ""
-echo "  # 3b. Test brew services (auto-start at boot)"
-echo "  sudo brew services start roxy"
-echo "  sudo brew services info roxy"
-echo "  roxy status"
-echo "  sudo brew services stop roxy"
+echo "  roxy stop"
+echo "  roxy start"
 echo ""
 echo "  # 4. Verify config location"
-echo "  cat /etc/roxy/config.toml"
-echo "  ls -la /etc/roxy/"
+echo "  cat \"$HOME/Library/Application Support/Roxy/config.toml\""
+echo "  ls -la \"$HOME/Library/Application Support/Roxy/\""
 echo ""
 echo "  # 5. Clean up when done"
 echo "  ./scripts/test-brew.sh clean"

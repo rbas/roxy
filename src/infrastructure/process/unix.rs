@@ -1,5 +1,5 @@
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
@@ -26,7 +26,10 @@ impl ProcessControl for UnixProcessControl {
             anyhow::bail!("Failed to send SIGTERM to pid {pid}: {stderr}");
         }
 
-        std::thread::sleep(timeout);
+        let deadline = Instant::now() + timeout;
+        while self.process_exists(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
 
         if self.process_exists(pid) {
             let output = Command::new("kill")

@@ -33,9 +33,10 @@ impl From<DomainRegistration> for RegistrationDto {
 impl From<RegistrationDto> for DomainRegistration {
     fn from(dto: RegistrationDto) -> Self {
         let mut reg = DomainRegistration::new(dto.pattern, dto.routes);
-        if dto.https_enabled {
-            reg.enable_https();
-        }
+        // HTTPS availability is now global: the daemon signs an exact leaf
+        // certificate from SNI whenever the Root CA is installed. The legacy
+        // field remains readable for config compatibility.
+        reg.enable_https();
         reg
     }
 }
