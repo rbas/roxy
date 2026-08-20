@@ -2,7 +2,9 @@
 
 ![Roxy](assets/roxy-logo-small.png)
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+<!-- Badges section -->
+![License](https://img.shields.io/badge/license-MIT-blue.svg) [![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-Support-ea4aaa?logo=github-sponsors&logoColor=white)](https://github.com/sponsors/rbas)
+
 
 **Stop juggling localhost ports.** Get real `.roxy` domains with trusted
 HTTPS for every local project.
